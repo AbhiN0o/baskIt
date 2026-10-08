@@ -36,6 +36,7 @@ const productSchema = new mongoose.Schema(
     quantity: {
       type: Number,
       default: 0,
+      min: [0, "Stock cannot be negative"], // last line of defence against overselling
     },
     rating: {
       type: Number,
@@ -45,6 +46,10 @@ const productSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    // Denormalised from the seller so the marketplace can filter by region
+    // without a join. Kept in sync when the seller changes their region.
+    state: { type: String, default: "", index: true },
+    city: { type: String, default: "", index: true },
     isActive: {
       type: Boolean,
       default: true, 

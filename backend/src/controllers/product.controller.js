@@ -1,10 +1,21 @@
 import Product from "../models/product.model.js";
 import cloudinary from "../lib/cloudinary.js";
+import Seller from "../models/seller.model.js";
+import mongoose from "mongoose";
+
+const toTags = (tags) => {
+  if (!tags) return [];
+  const arr = Array.isArray(tags) ? tags : String(tags).split(",");
+  return arr.map((t) => t.trim()).filter(Boolean);
+};
+const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 
 
 export const createProduct = async (req, res) => {
   try {
-    const { title, description, price, category, tags, quantity } = req.body;
+ const { title, description, price, category, tags, quantity } = req.body;
+    const seller = await Seller.findById(req.user._id).select("state city");
     
     let imageUrls = [];
     if (req.files) {
@@ -27,8 +38,10 @@ export const createProduct = async (req, res) => {
       price,
       category,
       images: imageUrls,
-      tags: Array.isArray(tags) ? tags : tags.split(","),
+      tags: toTags(tags),
       quantity,
+      state: seller?.state || "",
+      city: seller?.city || "",
     });
 
     const savedProduct = await newProduct.save();
@@ -48,25 +61,29 @@ export const updateProduct = async (req, res) => {
     if (product.seller.toString() !== req.user._id.toString()) {
       return res.status(403).json({ message: "You can only edit your own products" });
     }
-    const { title, description, price, category, tags, quantity, images } = req.body;
+    const { title, description, price, category, tags, quantity, keepImages } = req.body;
 
     if (title) product.title = title;
-    if (description) product.description = description;
-    if (price) product.price = price;
+    if (description !== undefined) product.description = description;
+    if (price !== undefined && price !== "") product.price = price;
     if (category) product.category = category;
-    if (tags) product.tags = Array.isArray(tags) ? tags : tags.split(",");
-    if (quantity) product.quantity = quantity;
-    const keepImages = Array.isArray(images) ? images : []; //edge case checkin
-    const imagesToDelete = product.images.filter(img => !keepImages.includes(img));
-    for (const url of imagesToDelete) {
-      const segments = url.split("/");
-      const filename = segments[segments.length - 1]; 
-      const publicId = `products/${filename.split(".")[0]}`;
+    if (tags !== undefined) product.tags = toTags(tags);
+    // `if (quantity)` would make it impossible to set stock to 0
+    if (quantity !== undefined && quantity !== "") product.quantity = quantity;
 
-      await cloudinary.uploader.destroy(publicId);
+    // The client sends `keepImages[]` (the URLs to keep). If it's absent we keep
+    // every existing image rather than silently deleting them all.
+    if (keepImages !== undefined) {
+      const keep = Array.isArray(keepImages) ? keepImages : [keepImages];
+      const imagesToDelete = product.images.filter((img) => !keep.includes(img));
+      for (const url of imagesToDelete) {
+        const segments = url.split("/");
+        const filename = segments[segments.length - 1];
+        const publicId = `products/${filename.split(".")[0]}`;
+        await cloudinary.uploader.destroy(publicId);
+      }
+      product.images = product.images.filter((img) => keep.includes(img));
     }
-
-    product.images = keepImages || [];
 
     if (req.files && req.files.length > 0) {
       for (const file of req.files) {
@@ -92,18 +109,31 @@ export const updateProduct = async (req, res) => {
 
 export const getProducts = async (req, res) => {
   try {
-    const { category, minPrice, maxPrice, search } = req.query;
+    const { category, minPrice, maxPrice, search, seller, state, city, sort } = req.query;
 
     let filter = { isActive: true };
 
     if (category) filter.category = category;
     if (minPrice) filter.price = { ...filter.price, $gte: Number(minPrice) };
     if (maxPrice) filter.price = { ...filter.price, $lte: Number(maxPrice) };
-    if (search) filter.title = { $regex: search, $options: "i" }; 
+    if (search) filter.title = { $regex: escapeRegex(String(search)), $options: "i" };
+    if (seller) {
+      if (!mongoose.isValidObjectId(seller)) return res.json([]);
+      filter.seller = seller;
+    }
+    if (state) filter.state = state;
+    if (city) filter.city = city;
+
+    const sorts = {
+      newest: { createdAt: -1 },
+      "price-asc": { price: 1 },
+      "price-desc": { price: -1 },
+      rating: { rating: -1, createdAt: -1 },
+    };
 
     const products = await Product.find(filter)
-      .populate("seller", "businessName verified") 
-      .sort({ createdAt: -1 }); 
+      .populate("seller", "businessName verified state city")
+      .sort(sorts[sort] || sorts.newest);
 
     res.json(products);
   } catch (err) {
@@ -115,7 +145,7 @@ export const getProducts = async (req, res) => {
 export const getProductById = async (req, res) => {
   try {
     const product = await Product.findById(req.params.id)
-      .populate("seller", "businessName verified");
+      .populate("seller", "businessName verified state city profilePic description");
 
     if (!product) return res.status(404).json({ message: "Product not found" });
 
@@ -151,14 +181,11 @@ export const deleteProduct = async (req, res) => {
 export const getProductBySellerId = async (req, res) => {
   try {
     const sellerId = req.params.id;
+    if (!mongoose.isValidObjectId(sellerId)) return res.json([]);
 
-    const products = await Product.find({ seller: sellerId })
+    const products = await Product.find({ seller: sellerId, isActive: true })
       .populate("seller", "businessName verified") // populate basic seller info
       .sort({ createdAt: -1 }); // newest first
-
-    if (!products || products.length === 0) {
-      return res.status(404).json({ message: "No products found for this seller" });
-    }
 
     res.json(products);
   } catch (err) {

@@ -3,10 +3,11 @@ import { motion } from "framer-motion";
 import { User, Mail, Lock, Building, FileText, ArrowRight } from "lucide-react";
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { sellerSignup } from '../lib/api';
+import RegionSelect from '../components/RegionSelect';
 
 export default function SellerSignupPage() {
   const [signupData, setSignupData] = useState({
-    fullName: '', email: '', password: '', businessName: '', description: ''
+    fullName: '', email: '', password: '', businessName: '', description: '', state: '', city: ''
   });
   const [focused, setFocused] = useState(null);
 
@@ -59,16 +60,16 @@ export default function SellerSignupPage() {
               <span className="text-transparent" style={{ WebkitTextStroke: '2px #d97706' }}>Business.</span>
             </h1>
             <p className="text-stone-500 text-lg max-w-sm leading-relaxed">
-              Showcase your crafts to the world. Connect with buyers and grow your artisan business.
+              Put your craft in front of the people around you. Tell us where you make it and nearby buyers will find you.
             </p>
 
             {/* Benefits */}
             <div className="mt-10 grid grid-cols-2 gap-px bg-stone-800">
               {[
                 { num: 'Free', label: 'To List' },
-                { num: '12K+', label: 'Active Buyers' },
-                { num: '190+', label: 'Countries' },
-                { num: '24/7', label: 'Support' },
+                { num: 'Local', label: 'Buyers In Your City' },
+                { num: 'COD', label: 'Cash On Delivery' },
+                { num: 'Direct', label: 'You Own Your Shop' },
               ].map((b) => (
                 <div key={b.label} className="bg-stone-950 p-5">
                   <div className="text-amber-400 font-black text-xl mb-0.5">{b.num}</div>
@@ -102,7 +103,7 @@ export default function SellerSignupPage() {
           <div className="mb-10">
             <span className="text-amber-400 text-xs tracking-[0.3em] uppercase font-medium block mb-3">New Seller</span>
             <h2 className="text-3xl font-black text-stone-100">Open Your Store</h2>
-            <p className="text-stone-600 text-sm mt-1">Fill in your details to start selling</p>
+            <p className="text-stone-600 text-sm mt-1">Fill in your details and tell us where you create</p>
           </div>
 
           {error && (
@@ -135,6 +136,16 @@ export default function SellerSignupPage() {
                 </div>
               );
             })}
+
+            {/* Where you make your craft */}
+            <div className="border-b border-stone-800">
+              <RegionSelect
+                required
+                state={signupData.state}
+                city={signupData.city}
+                onChange={(r) => setSignupData({ ...signupData, ...r })}
+              />
+            </div>
 
             {/* Description — textarea special case */}
             <div className={`border-b border-stone-800 transition-colors ${focused === 'description' ? 'bg-stone-900/60' : ''}`}>

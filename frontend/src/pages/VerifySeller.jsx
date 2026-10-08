@@ -33,7 +33,7 @@ export default function VerifySeller() {
         setSuccess(false);
       } finally {
         setLoading(false);
-        setTimeout(() => navigate("/sellermarket"), 1500);
+        setTimeout(() => navigate("/seller/dashboard"), 1500);
       }
     };
 
@@ -143,7 +143,7 @@ export default function VerifySeller() {
               The verification link is invalid or has expired. Please request a new one from your dashboard.
             </p>
             <motion.button
-              onClick={() => navigate("/sellermarket")}
+              onClick={() => navigate("/seller/dashboard")}
               className="px-6 py-3 bg-amber-400 text-stone-950 font-bold text-xs uppercase tracking-widest hover:bg-amber-300 transition-all"
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}

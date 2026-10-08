@@ -3,13 +3,19 @@ import User from '../models/user.model.js';
 import bcrypt from 'bcryptjs';
 import cloudinary from '../lib/cloudinary.js';
 import Seller from '../models/seller.model.js';
+import Product from '../models/product.model.js';
+import mongoose from 'mongoose';
+import { validateRegion } from '../lib/regions.js';
 
 export const signupHandler = async (req, res) => {
   try {
-    const { email, fullName, password ,address} = req.body;
+    const { email, fullName, password, address, state, city } = req.body;
     if (!email || !fullName || !password) {
       return res.status(400).json({ message: "All fields are required" });
     }
+
+    const regionError = validateRegion(state, city);
+    if (regionError) return res.status(400).json({ message: regionError });
 
     const existingUser = await User.findOne({ email });
     if (existingUser) {
@@ -21,7 +27,9 @@ export const signupHandler = async (req, res) => {
       email,
       fullName,
       password: hashedPassword,
-      address
+      address,
+      state,
+      city,
     });
 
     // Generate JWT for this user with type 'user'
@@ -83,23 +91,35 @@ export const logoutHandler = async (req, res) => {
 
 export const updateProfileHandler = async (req, res) => {
   try {
-    const { profilePic } = req.body;
-    if (!profilePic) {
-      return res.status(400).json({ message: "Profile picture is required" });
-    }
+    const { profilePic, address, state, city } = req.body;
     if (!req.user) {
       return res.status(401).json({ message: "Unauthorized access" });
     }
 
-    const uploadResponse = await cloudinary.uploader.upload(profilePic, {
-      folder: "profilePics",
-    });
+    const updates = {};
 
-    const updatedUser = await User.findByIdAndUpdate(
-      req.user._id,
-      { profilePic: uploadResponse.secure_url },
-      { new: true }
-    );
+    if (profilePic) {
+      const uploadResponse = await cloudinary.uploader.upload(profilePic, {
+        folder: "profilePics",
+      });
+      updates.profilePic = uploadResponse.secure_url;
+    }
+
+    if (typeof address === "string") updates.address = address.trim();
+
+    // Region is edited as a pair so state/city can never disagree.
+    if (state !== undefined || city !== undefined) {
+      const regionError = validateRegion(state, city);
+      if (regionError) return res.status(400).json({ message: regionError });
+      updates.state = state;
+      updates.city = city;
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ message: "Nothing to update" });
+    }
+
+    const updatedUser = await User.findByIdAndUpdate(req.user._id, updates, { new: true });
 
     return res.status(200).json({
       message: "Profile updated successfully",
@@ -189,3 +209,56 @@ export const unfollowSellerHandler = async (req, res) => {
   }
 };
 
+
+
+// ---- Favourites (wishlist) ---------------------------------------------
+export const getFavoritesHandler = async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id).populate({
+      path: "favorites",
+      match: { isActive: true },
+      populate: { path: "seller", select: "businessName verified state city" },
+    });
+    res.json((user.favorites || []).filter(Boolean));
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Internal server error", error: err.message });
+  }
+};
+
+export const addFavoriteHandler = async (req, res) => {
+  try {
+    const { productId } = req.params;
+    if (!mongoose.isValidObjectId(productId)) {
+      return res.status(400).json({ message: "Invalid product id" });
+    }
+    const product = await Product.findById(productId).select("_id");
+    if (!product) return res.status(404).json({ message: "Product not found" });
+
+    // $addToSet keeps this idempotent (double-clicks can't create duplicates)
+    const user = await User.findByIdAndUpdate(
+      req.user._id,
+      { $addToSet: { favorites: productId } },
+      { new: true }
+    );
+    res.json({ message: "Saved", favorites: user.favorites });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Internal server error", error: err.message });
+  }
+};
+
+export const removeFavoriteHandler = async (req, res) => {
+  try {
+    const { productId } = req.params;
+    const user = await User.findByIdAndUpdate(
+      req.user._id,
+      { $pull: { favorites: productId } },
+      { new: true }
+    );
+    res.json({ message: "Removed", favorites: user.favorites });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Internal server error", error: err.message });
+  }
+};

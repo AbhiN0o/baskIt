@@ -7,9 +7,10 @@ import {
   checkAuthHandler,
   getFollowersHandler,
   sendVerificationHandler,
-  verifySeller
+  verifySeller,
+  getPublicSeller
 } from "../controllers/seller.controller.js"; 
-import { protectRoute, sellerOnly } from "../middlewares/auth.middleware.js";
+import { protectRoute, sellerOnly, optionalAuth } from "../middlewares/auth.middleware.js";
 
 const router = Router();
 
@@ -28,5 +29,8 @@ router.get("/:id/followers", protectRoute, sellerOnly, getFollowersHandler);
 router.post("/send-verification", protectRoute, sellerOnly, sendVerificationHandler);
 
 router.get("/verify", verifySeller);
+
+// Public artisan profile. Must stay LAST so it doesn't shadow /check and /verify.
+router.get("/:id", optionalAuth, getPublicSeller);
 
 export default router;

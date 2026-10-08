@@ -1,13 +1,13 @@
 import { Router } from "express";
-import { 
-  getCategoriesStats,
-  getSellerStats
-} from "../controllers/stats.controller.js";
-// import { protectRoute, userOnly } from "../middlewares/auth.middleware.js";
+import { getMySellerStats, getPublicStats } from "../controllers/stats.controller.js";
+import { protectRoute, sellerOnly } from "../middlewares/auth.middleware.js";
 
 const router = Router();
 
-router.get("/categories", getCategoriesStats);
-router.get("/sales", getSellerStats);
+// Per-seller analytics: only the logged-in seller's own data.
+router.get("/seller", protectRoute, sellerOnly, getMySellerStats);
+
+// Landing-page numbers (counts only, nothing private).
+router.get("/public", getPublicStats);
 
 export default router;

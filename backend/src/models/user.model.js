@@ -32,10 +32,18 @@ const userSchema = new mongoose.Schema(
         ref: "Order",
       }
     ],
-      address:{
-        type:String,
-        default:""
-      },
+    address: {
+      type: String,
+      default: "",
+    },
+    state: { type: String, default: "" },
+    city: { type: String, default: "" },
+    favorites: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Product",
+      }
+    ],
   },
 
   {

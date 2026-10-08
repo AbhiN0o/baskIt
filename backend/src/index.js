@@ -13,6 +13,7 @@ import cartRoutes from "./routes/cart.route.js";
 import statsRoutes from "./routes/stats.route.js";
 import reviewRoutes from "./routes/review.route.js";
 import aiRoutes from "./routes/ai.route.js";
+import regionRoutes from "./routes/region.route.js";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -58,6 +59,7 @@ app.use("/api/orders", orderRoutes);
 app.use("/api/stats", statsRoutes);
 app.use("/api/reviews", reviewRoutes);
 app.use("/api/ai", aiRoutes);
+app.use("/api/regions", regionRoutes);
 
 // Fallback error handler (e.g. CORS errors, multer errors)
 // eslint-disable-next-line no-unused-vars

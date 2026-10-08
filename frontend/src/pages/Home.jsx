@@ -1,6 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { motion, useMotionValue, useTransform } from 'framer-motion';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import useAuthUser from '../hooks/useAuthUser';
+import { getPublicStats } from '../lib/api';
 
 export default function ArtisanLanding() {
   const [mounted, setMounted] = useState(false);
@@ -11,6 +14,8 @@ export default function ArtisanLanding() {
   const orb1Y = useTransform(mouseY, [0, window?.innerHeight || 1080], [0, 15]);
 
   const navigate = useNavigate();
+  const { authUser, type } = useAuthUser();
+  const { data: publicStats } = useQuery({ queryKey: ['publicStats'], queryFn: getPublicStats, staleTime: 5 * 60 * 1000 });
 
   useEffect(() => {
     setMounted(true);
@@ -86,19 +91,32 @@ export default function ArtisanLanding() {
           <span className="text-stone-100 font-bold tracking-widest text-sm uppercase">BaskIt</span>
         </div>
         <div className="hidden md:flex items-center gap-8 text-stone-500 text-sm tracking-wide">
-          <span>Marketplace</span>
-          <span>Sellers</span>
-          <span>About</span>
+          <Link to="/market" className="hover:text-amber-400 transition-colors">Marketplace</Link>
+          <Link to="/seller/signup" className="hover:text-amber-400 transition-colors">Sell with us</Link>
         </div>
         <div className="flex items-center gap-3">
-          <motion.button
-            className="px-4 py-2 text-stone-400 text-sm border border-stone-700 hover:border-amber-400 hover:text-amber-400 transition-all duration-200"
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-            onClick={() => navigate('/user/signup')}
-          >
-            Sign Up
-          </motion.button>
+          {authUser ? (
+            <motion.button
+              className="px-4 py-2 text-stone-400 text-sm border border-stone-700 hover:border-amber-400 hover:text-amber-400 transition-all duration-200"
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={() => navigate(type === 'seller' ? '/seller/dashboard' : '/market')}
+            >
+              {type === 'seller' ? 'My Dashboard' : 'Open Marketplace'}
+            </motion.button>
+          ) : (
+            <>
+              <Link to="/user/login" className="hidden sm:block px-4 py-2 text-stone-500 text-sm hover:text-amber-400 transition-colors">Log in</Link>
+              <motion.button
+                className="px-4 py-2 text-stone-400 text-sm border border-stone-700 hover:border-amber-400 hover:text-amber-400 transition-all duration-200"
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                onClick={() => navigate('/user/signup')}
+              >
+                Sign Up
+              </motion.button>
+            </>
+          )}
         </div>
       </motion.header>
 
@@ -115,7 +133,7 @@ export default function ArtisanLanding() {
           <div className="lg:col-span-8 flex flex-col justify-center px-8 md:px-16 py-20 border-r border-stone-800">
             <motion.div variants={itemVariants} className="mb-4">
               <span className="text-amber-400 text-xs tracking-[0.3em] uppercase font-medium">
-                Artisan Marketplace
+                Your local artisan network
               </span>
             </motion.div>
 
@@ -123,22 +141,21 @@ export default function ArtisanLanding() {
               className="text-6xl md:text-8xl lg:text-[7rem] font-black text-stone-100 leading-[0.9] tracking-tight mb-8"
               variants={itemVariants}
             >
-              Where<br />
+              Craft<br />
               <span className="text-transparent"
                 style={{ WebkitTextStroke: '2px #d97706' }}
               >
-                Authentic
+                Made Near
               </span>
               <br />
-              Meets the<br />
-              World.
+              You.
             </motion.h1>
 
             <motion.p
               className="text-stone-500 text-lg md:text-xl max-w-xl leading-relaxed mb-12 font-light"
               variants={itemVariants}
             >
-              Connecting passionate creators with global audiences through trust, quality, and seamless discovery.
+              Find the potters, weavers and makers in your own state and city. BaskIt connects local artisans with the people around them.
             </motion.p>
 
             <motion.div className="flex flex-col sm:flex-row gap-4" variants={itemVariants}>
@@ -149,7 +166,7 @@ export default function ArtisanLanding() {
                 onClick={() => navigate('/user/signup')}
               >
                 <span>🛍</span>
-                Shop Authentic
+                Shop Local
                 <span className="group-hover:translate-x-1 transition-transform duration-200">→</span>
               </motion.button>
 
@@ -170,9 +187,9 @@ export default function ArtisanLanding() {
           <div className="lg:col-span-4 flex flex-col border-t border-stone-800 lg:border-t-0">
             {/* Stat blocks stacked vertically */}
             {[
-              { num: '12K+', label: 'Artisan Sellers', sub: 'Verified & trusted' },
-              { num: '84K+', label: 'Unique Products', sub: 'Handcrafted pieces' },
-              { num: '190+', label: 'Countries Served', sub: 'Global reach' },
+              { num: publicStats?.artisans ?? '–', label: 'Local Artisans', sub: 'Registered on BaskIt' },
+              { num: publicStats?.products ?? '–', label: 'Handmade Products', sub: 'Listed right now' },
+              { num: publicStats ? `${publicStats.cities} cities` : '–', label: `Across ${publicStats?.states ?? '–'} states`, sub: 'Where artisans sell from' },
             ].map((stat, i) => (
               <motion.div
                 key={i}
@@ -194,14 +211,14 @@ export default function ArtisanLanding() {
           variants={itemVariants}
         >
           <div className="flex items-center gap-6">
-            {['Handcrafted', 'Verified Sellers', 'Secure Payments', 'Global Shipping'].map((tag) => (
+            {['Handcrafted', 'Buy Local', 'Meet Your Maker', 'Cash on Delivery'].map((tag) => (
               <span key={tag} className="text-stone-600 text-xs tracking-wider hidden md:block">
                 ✦ {tag}
               </span>
             ))}
           </div>
           <div className="text-stone-700 text-xs tracking-widest uppercase">
-            © 2025 BaskIt
+            © {new Date().getFullYear()} BaskIt
           </div>
         </motion.div>
       </motion.div>

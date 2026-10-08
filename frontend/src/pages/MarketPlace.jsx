@@ -1,38 +1,48 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ShoppingBag, User as UserIcon, LogOut, Package, ClipboardList, Heart, Search, Star } from 'lucide-react';
+import { ShoppingBag, User as UserIcon, LogOut, ClipboardList, Heart, Search, Star, MapPin, Store } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getAllProducts, logout, addToCart } from '../lib/api';
+import { toast } from 'react-hot-toast';
+import { getAllProducts, logout, addToCart, getCart } from '../lib/api';
 import { useNavigate, Link } from 'react-router-dom';
 import useAuthUser from '../hooks/useAuthUser';
-import { axiosInstance } from '../lib/axios';
+import useFavorites from '../hooks/useFavorites';
 import { BouncingDotsLoader } from '../components/Loading';
+import RegionSelect from '../components/RegionSelect';
+import { errMsg, inr } from '../lib/errors';
+
+const REGION_KEY = 'baskit_region';
+const loadRegion = () => {
+  try { return JSON.parse(localStorage.getItem(REGION_KEY)) || null; } catch { return null; }
+};
 
 export default function ArtisanMarketplace() {
-  const [change, setChange] = useState(true);
-  const [cartQuantity, setCartQuantity] = useState('-');
-
-  useEffect(() => {
-    const getQuantity = async () => {
-      let temp = 0;
-      const res = await axiosInstance.get('/cart');
-      const prodArr = res.data.products;
-      prodArr.map((item) => { temp += item?.quantity; });
-      setCartQuantity(temp);
-    };
-    getQuantity();
-  }, [change]);
-
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('all');
-  const [favorites, setFavorites] = useState(new Set());
+  const [sort, setSort] = useState('newest');
   const [hoveredProduct, setHoveredProduct] = useState(null);
-  const [mounted, setMounted] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
 
-  const { authUser, isLoading, type } = useAuthUser();
+  const { authUser, type } = useAuthUser();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const { isFavorite, toggle: toggleFavorite } = useFavorites();
+
+  // Region filter: remembered between visits, and defaults to the buyer's own
+  // city the first time they land here.
+  const [region, setRegion] = useState(() => loadRegion() || { state: '', city: '' });
+  const [regionTouched, setRegionTouched] = useState(() => !!loadRegion());
+  useEffect(() => {
+    if (!regionTouched && type === 'user' && authUser?.state) {
+      setRegion({ state: authUser.state, city: authUser.city || '' });
+    }
+  }, [authUser, type, regionTouched]);
+
+  const changeRegion = (next) => {
+    setRegion(next);
+    setRegionTouched(true);
+    try { localStorage.setItem(REGION_KEY, JSON.stringify(next)); } catch { /* storage unavailable */ }
+  };
 
   const { mutate: logoutMutation } = useMutation({
     mutationFn: logout,
@@ -41,67 +51,62 @@ export default function ArtisanMarketplace() {
       navigate('/');
     },
   });
-
   const handleLogout = () => {
     logoutMutation(type === 'seller' ? 'seller' : 'user');
     setIsProfileOpen(false);
   };
 
-  const profilePic = authUser?.profilePic || 'https://via.placeholder.com/40';
+  const profilePic = authUser?.profilePic || 'https://img.myloview.com/stickers/default-avatar-profile-icon-vector-social-media-user-photo-700-205577532.jpg';
+
+  const { data: cart } = useQuery({ queryKey: ['cart'], queryFn: getCart, enabled: type === 'user' });
+  const cartQuantity = (cart?.products || []).reduce((n, item) => n + (item?.quantity || 0), 0);
 
   const { data: products = [], isLoading: isProductLoading, error } = useQuery({
-    queryKey: ['products'],
-    queryFn: getAllProducts,
+    queryKey: ['products', region.state, region.city, sort],
+    queryFn: () => getAllProducts({ state: region.state, city: region.city, sort }),
   });
 
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  const getCategories = () => {
-    const uniqueCategories = [...new Set(products.map(p => p.category))];
-    const categoryEmojis = { electronics: '📱', jewelry: '💎', pottery: '🏺', textiles: '🧵', art: '🎨', wood: '🌳', clothing: '👕', books: '📚', home: '🏠', sports: '⚽' };
+  const categories = (() => {
+    const unique = [...new Set(products.map((p) => p.category))];
+    const emojis = { electronics: '📱', jewelry: '💎', pottery: '🏺', textiles: '🧵', art: '🎨', wood: '🌳', clothing: '👕', books: '📚', home: '🏠', sports: '⚽' };
     return [
       { id: 'all', name: 'All', emoji: '✦' },
-      ...uniqueCategories.map(c => ({ id: c, name: c.charAt(0).toUpperCase() + c.slice(1), emoji: categoryEmojis[c] || '🛍' }))
+      ...unique.map((c) => ({ id: c, name: c.charAt(0).toUpperCase() + c.slice(1), emoji: emojis[c] || '🛍' })),
     ];
-  };
-  const categories = getCategories();
+  })();
 
-  const filteredProducts = products.filter(product => {
-    if (!product.isActive) return false;
+  const q = searchQuery.toLowerCase();
+  const filteredProducts = products.filter((product) => {
     const matchesSearch =
-      product.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      product.seller.businessName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      product.tags.some(tag => tag.toLowerCase().includes(searchQuery.toLowerCase())) ||
-      product.description.toLowerCase().includes(searchQuery.toLowerCase());
+      product.title.toLowerCase().includes(q) ||
+      product.seller?.businessName?.toLowerCase().includes(q) ||
+      product.tags.some((tag) => tag.toLowerCase().includes(q)) ||
+      product.description.toLowerCase().includes(q);
     const matchesCategory = selectedCategory === 'all' || product.category === selectedCategory;
     return matchesSearch && matchesCategory;
   });
 
-  const toggleFavorite = (productId) => {
-    setFavorites(prev => {
-      const n = new Set(prev);
-      n.has(productId) ? n.delete(productId) : n.add(productId);
-      return n;
-    });
-  };
-
   const { mutate: addToCartMutate } = useMutation({
-    mutationFn: ({ productId, quantity }) => addToCart({ productId, quantity }),
+    mutationFn: addToCart,
     onSuccess: () => {
-      setChange(p => !p);
-      alert('Added to cart!');
+      queryClient.invalidateQueries({ queryKey: ['cart'] });
+      toast.success('Added to cart');
     },
-    onError: (error) => { alert('Failed to add to cart: ' + error.message); }
+    onError: (e) => toast.error(errMsg(e, 'Failed to add to cart')),
   });
 
   const handleAddToCart = (productId) => {
-    if (!authUser) { navigate('/login'); return; }
+    if (!authUser) { toast('Log in to add items to your cart'); navigate('/user/login'); return; }
     addToCartMutate({ productId, quantity: 1 });
   };
 
-  if (!mounted || isProductLoading) {
+  const regionLabel = region.city
+    ? `${region.city}, ${region.state}`
+    : region.state
+    ? region.state
+    : 'all of India';
+
+  if (isProductLoading && products.length === 0) {
     return (
       <div className="min-h-screen bg-stone-950 flex items-center justify-center">
         <BouncingDotsLoader />
@@ -145,9 +150,9 @@ export default function ArtisanMarketplace() {
               <motion.button
                 whileHover={{ scale: 1.02 }}
                 className="px-4 py-2 bg-amber-400 text-stone-950 font-bold text-xs uppercase tracking-widest hover:bg-amber-300 transition-all"
-                onClick={() => navigate('/sellermarket')}
+                onClick={() => navigate('/seller/dashboard')}
               >
-                Seller Corner
+                Seller Dashboard
               </motion.button>
             )}
 
@@ -175,7 +180,7 @@ export default function ArtisanMarketplace() {
                       <Link to="/user" className="flex items-center gap-2 px-4 py-3 text-stone-300 hover:bg-stone-800 hover:text-amber-400 transition-all text-sm border-b border-stone-800">
                         <UserIcon size={14} /> Profile
                       </Link>
-                      <Link to="/orders" className="flex items-center gap-2 px-4 py-3 text-stone-300 hover:bg-stone-800 hover:text-amber-400 transition-all text-sm border-b border-stone-800">
+                      <Link to="/user?tab=orders" className="flex items-center gap-2 px-4 py-3 text-stone-300 hover:bg-stone-800 hover:text-amber-400 transition-all text-sm border-b border-stone-800">
                         <ClipboardList size={14} /> Orders
                       </Link>
                       <button
@@ -189,42 +194,58 @@ export default function ArtisanMarketplace() {
                 </AnimatePresence>
               </div>
             ) : (
-              <Link to="/" className="px-4 py-2 border border-stone-700 text-stone-400 text-sm hover:border-amber-400 hover:text-amber-400 transition-all">
-                Login
-              </Link>
+              <>
+                <Link to="/user/login" className="px-4 py-2 border border-stone-700 text-stone-400 text-sm hover:border-amber-400 hover:text-amber-400 transition-all">
+                  Login
+                </Link>
+                <Link to="/user/signup" className="hidden sm:block px-4 py-2 bg-amber-400 text-stone-950 text-sm font-bold hover:bg-amber-300 transition-all">
+                  Sign up
+                </Link>
+              </>
             )}
           </div>
         </div>
       </motion.nav>
 
       <div className="max-w-7xl mx-auto px-6">
-        {/* HERO SEARCH */}
-        <div className="py-16 border-b border-stone-800">
-          <motion.div
-            initial={{ y: 30, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            transition={{ delay: 0.1, duration: 0.6 }}
-          >
-            <span className="text-amber-400 text-xs tracking-[0.3em] uppercase font-medium mb-4 block">
-              ✦ Discover Crafts
-            </span>
+        {/* HERO */}
+        <div className="py-14 border-b border-stone-800">
+          <motion.div initial={{ y: 30, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.1, duration: 0.6 }}>
+            <span className="text-amber-400 text-xs tracking-[0.3em] uppercase font-medium mb-4 block">✦ Local artisans, near you</span>
             <h1 className="text-5xl md:text-7xl font-black text-stone-100 leading-[0.9] tracking-tight mb-6">
-              Authentic<br />
-              <span className="text-stone-600">Artisan Goods.</span>
+              Made by hands<br />
+              <span className="text-stone-600">in your region.</span>
             </h1>
             <p className="text-stone-500 max-w-xl mb-8 leading-relaxed">
-              Every piece has a story. Every artisan has a dream. Find treasures that connect you to their journey.
+              Meet the potters, weavers and makers in your own state and city. Buy local, keep the craft alive.
             </p>
 
-            <div className="relative max-w-lg">
-              <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-stone-600" size={18} />
-              <input
-                type="text"
-                placeholder="Search products, sellers, or tags..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full bg-stone-900 border border-stone-700 py-4 pl-12 pr-4 text-stone-200 placeholder-stone-600 focus:outline-none focus:border-amber-400 transition-colors text-base"
-              />
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 max-w-4xl">
+              <div className="relative">
+                <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-stone-600" size={18} />
+                <input
+                  type="text"
+                  placeholder="Search products, artisans, or tags..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full bg-stone-900 border border-stone-700 py-3 pl-12 pr-4 text-stone-200 placeholder-stone-600 focus:outline-none focus:border-amber-400 transition-colors text-base"
+                />
+              </div>
+              <RegionSelect compact anyLabel state={region.state} city={region.city} onChange={changeRegion} />
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 mt-3 text-xs">
+              <MapPin size={12} className="text-amber-400" />
+              <span className="text-stone-500">Showing artisans in <span className="text-stone-200 font-semibold">{regionLabel}</span></span>
+              {type === 'user' && authUser?.state && (
+                <>
+                  <button onClick={() => changeRegion({ state: authUser.state, city: authUser.city || '' })} className="px-2 py-1 border border-stone-700 text-stone-400 hover:border-amber-400 hover:text-amber-400 uppercase tracking-widest font-bold">My area</button>
+                  <button onClick={() => changeRegion({ state: authUser.state, city: '' })} className="px-2 py-1 border border-stone-700 text-stone-400 hover:border-amber-400 hover:text-amber-400 uppercase tracking-widest font-bold">My state</button>
+                </>
+              )}
+              {(region.state || region.city) && (
+                <button onClick={() => changeRegion({ state: '', city: '' })} className="px-2 py-1 border border-stone-700 text-stone-400 hover:border-amber-400 hover:text-amber-400 uppercase tracking-widest font-bold">All India</button>
+              )}
             </div>
           </motion.div>
         </div>
@@ -252,23 +273,48 @@ export default function ArtisanMarketplace() {
           ))}
         </div>
 
-        {/* RESULTS COUNT */}
-        <div className="py-4 flex items-center justify-between border-b border-stone-800/50 mb-8">
+        {/* RESULTS COUNT + SORT */}
+        <div className="py-4 flex items-center justify-between border-b border-stone-800/50 mb-8 gap-4">
           <span className="text-stone-600 text-sm">
-            <span className="text-stone-300 font-semibold">{filteredProducts.length}</span> products found
+            <span className="text-stone-300 font-semibold">{filteredProducts.length}</span> products from {regionLabel}
           </span>
+          <select
+            value={sort}
+            onChange={(e) => setSort(e.target.value)}
+            aria-label="Sort products"
+            className="bg-stone-900 border border-stone-700 text-stone-300 text-xs px-3 py-2 focus:outline-none focus:border-amber-400"
+          >
+            <option value="newest">Newest</option>
+            <option value="price-asc">Price: low to high</option>
+            <option value="price-desc">Price: high to low</option>
+            <option value="rating">Top rated</option>
+          </select>
         </div>
 
         {/* PRODUCT GRID */}
         {filteredProducts.length === 0 ? (
-          <motion.div
-            className="text-center py-24"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-          >
-            <div className="text-5xl mb-4">🔍</div>
-            <h3 className="text-stone-300 text-xl font-bold mb-2">No products found</h3>
-            <p className="text-stone-600">Try adjusting your search or category filters</p>
+          <motion.div className="text-center py-24" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+            <Store className="mx-auto text-stone-700 mb-4" size={44} />
+            <h3 className="text-stone-300 text-xl font-bold mb-2">
+              {products.length === 0 && (region.state || region.city) ? `No artisans in ${regionLabel} yet` : 'No products found'}
+            </h3>
+            <p className="text-stone-600 mb-6">
+              {products.length === 0 && (region.state || region.city)
+                ? 'Try a wider area - or know a local maker? Invite them to join BaskIt.'
+                : 'Try adjusting your search or category filters.'}
+            </p>
+            <div className="flex flex-wrap justify-center gap-3">
+              {region.city && (
+                <button onClick={() => changeRegion({ state: region.state, city: '' })} className="px-5 py-2.5 border border-stone-700 text-stone-300 text-xs font-bold uppercase tracking-widest hover:border-amber-400 hover:text-amber-400">
+                  Show all of {region.state}
+                </button>
+              )}
+              {(region.state || region.city) && (
+                <button onClick={() => changeRegion({ state: '', city: '' })} className="px-5 py-2.5 bg-amber-400 text-stone-950 text-xs font-bold uppercase tracking-widest hover:bg-amber-300">
+                  Show all of India
+                </button>
+              )}
+            </div>
           </motion.div>
         ) : (
           <motion.div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-px bg-stone-800" layout>
@@ -286,7 +332,6 @@ export default function ArtisanMarketplace() {
                   onHoverEnd={() => setHoveredProduct(null)}
                   onClick={() => navigate(`/product/${product._id}`)}
                 >
-                  {/* Image */}
                   <div className="relative overflow-hidden" style={{ aspectRatio: '4/3' }}>
                     <motion.img
                       src={product.images?.[0] || 'https://images.unsplash.com/photo-1560472354-b33ff0c44a43?w=600&h=600&fit=crop'}
@@ -296,35 +341,25 @@ export default function ArtisanMarketplace() {
                       transition={{ duration: 0.5 }}
                     />
 
-                    {/* Out of stock */}
                     {product.quantity === 0 && (
-                      <div className="absolute top-3 left-3 bg-stone-950 text-stone-300 px-2 py-1 text-xs font-bold tracking-widest uppercase border border-stone-700">
-                        Out of Stock
-                      </div>
+                      <div className="absolute top-3 left-3 bg-stone-950 text-stone-300 px-2 py-1 text-xs font-bold tracking-widest uppercase border border-stone-700">Out of Stock</div>
                     )}
 
-                    {/* Favorite */}
-                    <motion.button
-                      onClick={(e) => { e.stopPropagation(); toggleFavorite(product._id); }}
-                      className="absolute top-3 right-3 p-2 bg-stone-950/80 border border-stone-700 hover:border-amber-400 transition-all"
-                      whileHover={{ scale: 1.1 }}
-                      whileTap={{ scale: 0.9 }}
-                    >
-                      <Heart
-                        size={14}
-                        className={favorites.has(product._id) ? 'fill-amber-400 text-amber-400' : 'text-stone-400'}
-                      />
-                    </motion.button>
+                    {type !== 'seller' && (
+                      <motion.button
+                        onClick={(e) => { e.stopPropagation(); toggleFavorite(product._id); }}
+                        className="absolute top-3 right-3 p-2 bg-stone-950/80 border border-stone-700 hover:border-amber-400 transition-all"
+                        whileHover={{ scale: 1.1 }}
+                        whileTap={{ scale: 0.9 }}
+                        aria-label={isFavorite(product._id) ? 'Remove from saved' : 'Save for later'}
+                      >
+                        <Heart size={14} className={isFavorite(product._id) ? 'fill-amber-400 text-amber-400' : 'text-stone-400'} />
+                      </motion.button>
+                    )}
 
-                    {/* Hover overlay */}
                     <AnimatePresence>
                       {hoveredProduct === product._id && (
-                        <motion.div
-                          initial={{ opacity: 0 }}
-                          animate={{ opacity: 1 }}
-                          exit={{ opacity: 0 }}
-                          className="absolute inset-0 bg-stone-950/70 flex items-end p-4"
-                        >
+                        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-stone-950/70 flex items-end p-4 pointer-events-none">
                           <div>
                             <p className="text-stone-200 text-sm leading-relaxed line-clamp-2">{product.description}</p>
                             <div className="flex items-center gap-3 mt-2 text-xs text-stone-500">
@@ -337,22 +372,28 @@ export default function ArtisanMarketplace() {
                     </AnimatePresence>
                   </div>
 
-                  {/* Card Body */}
                   <div className="p-5 border-t border-stone-800">
                     <div className="flex items-start justify-between mb-2">
                       <div className="flex-1 min-w-0">
-                        <h3 className="text-stone-100 font-bold text-base leading-tight truncate group-hover:text-amber-400 transition-colors">
-                          {product.title}
-                        </h3>
+                        <h3 className="text-stone-100 font-bold text-base leading-tight truncate group-hover:text-amber-400 transition-colors">{product.title}</h3>
                         <div className="flex items-center gap-1 mt-1">
-                          <span className="text-stone-600 text-xs">{product.seller.businessName}</span>
-                          {product.seller.verified && (
-                            <span className="text-amber-400 text-xs">✓</span>
-                          )}
+                          <Link
+                            to={`/seller/${product.seller?._id}`}
+                            onClick={(e) => e.stopPropagation()}
+                            className="text-stone-500 hover:text-amber-400 text-xs transition-colors truncate"
+                          >
+                            {product.seller?.businessName}
+                          </Link>
+                          {product.seller?.verified && <span className="text-amber-400 text-xs">✓</span>}
                         </div>
+                        {(product.city || product.seller?.city) && (
+                          <div className="flex items-center gap-1 mt-1 text-stone-600 text-xs">
+                            <MapPin size={10} /> {product.city || product.seller?.city}, {product.state || product.seller?.state}
+                          </div>
+                        )}
                       </div>
                       <div className="text-right ml-3">
-                        <div className="text-stone-100 font-black text-lg">₹{product.price}</div>
+                        <div className="text-stone-100 font-black text-lg">{inr(product.price)}</div>
                         <div className="flex items-center gap-1 justify-end">
                           <Star className="fill-amber-400 text-amber-400" size={10} />
                           <span className="text-stone-500 text-xs">{product.rating > 0 ? product.rating : 'New'}</span>
@@ -360,18 +401,15 @@ export default function ArtisanMarketplace() {
                       </div>
                     </div>
 
-                    {/* Tags */}
                     {product.tags.length > 0 && (
                       <div className="flex flex-wrap gap-1 mb-4">
                         {product.tags.slice(0, 3).map((tag, idx) => (
-                          <span key={idx} className="text-stone-600 text-xs px-2 py-0.5 border border-stone-800 bg-stone-900">
-                            {tag}
-                          </span>
+                          <span key={idx} className="text-stone-600 text-xs px-2 py-0.5 border border-stone-800 bg-stone-900">{tag}</span>
                         ))}
                       </div>
                     )}
 
-                    {type === 'user' && (
+                    {type !== 'seller' && (
                       <motion.button
                         onClick={(e) => { e.stopPropagation(); handleAddToCart(product._id); }}
                         className={`w-full py-2.5 text-xs font-bold tracking-widest uppercase transition-all ${

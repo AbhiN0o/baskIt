@@ -4,13 +4,19 @@ import bcrypt from 'bcryptjs';
 import cloudinary from '../lib/cloudinary.js';
 import { createVerificationToken, sendVerificationEmail } from "../lib/utils.js";
 import crypto from "crypto";
+import mongoose from "mongoose";
+import Product from "../models/product.model.js";
+import { validateRegion } from "../lib/regions.js";
 export const signupHandler = async (req, res) => {
   try {
-    const { email, fullName, password, businessName, description } = req.body;
+    const { email, fullName, password, businessName, description, state, city } = req.body;
 
     if (!email || !fullName || !password || !businessName) {
       return res.status(400).json({ message: "All required fields must be filled" });
     }
+
+    const regionError = validateRegion(state, city);
+    if (regionError) return res.status(400).json({ message: regionError });
 
     const existingSeller = await Seller.findOne({ email });
     if (existingSeller) {
@@ -25,6 +31,8 @@ export const signupHandler = async (req, res) => {
       password: hashedPassword,
       businessName,
       description: description || "",
+      state,
+      city,
     });
 
     generateToken(newSeller._id, "seller", res);
@@ -87,7 +95,7 @@ export const logoutHandler = async (req, res) => {
 
 export const updateProfileHandler = async (req, res) => {
   try {
-    const { profilePic, description, businessName } = req.body;
+    const { profilePic, description, businessName, state, city } = req.body;
 
     if (!req.user) {
       return res.status(401).json({ message: "Unauthorized access" });
@@ -102,14 +110,28 @@ export const updateProfileHandler = async (req, res) => {
       updatedFields.profilePic = uploadResponse.secure_url;
     }
 
-    if (description) updatedFields.description = description;
+    if (description !== undefined) updatedFields.description = description;
     if (businessName) updatedFields.businessName = businessName;
+
+    // Region is edited as a pair so state/city can never disagree.
+    const regionChanged = state !== undefined || city !== undefined;
+    if (regionChanged) {
+      const regionError = validateRegion(state, city);
+      if (regionError) return res.status(400).json({ message: regionError });
+      updatedFields.state = state;
+      updatedFields.city = city;
+    }
 
     const updatedSeller = await Seller.findByIdAndUpdate(
       req.user._id,
       updatedFields,
       { new: true }
     );
+
+    // Keep the denormalised region on this seller's listings in sync.
+    if (regionChanged) {
+      await Product.updateMany({ seller: req.user._id }, { state, city });
+    }
 
     return res.status(200).json({
       message: "Profile updated successfully",
@@ -145,7 +167,11 @@ export const checkAuthHandler = async (req, res) => {
 
 export const getFollowersHandler = async (req, res) => {
   try {
-    const sellerId = req.params.sellerId;
+    const sellerId = req.params.id;
+    // A seller may only read their own follower count.
+    if (sellerId !== req.user._id.toString()) {
+      return res.status(403).json({ message: "You can only view your own followers" });
+    }
     const seller = await Seller.findById(sellerId);
 
     if (!seller) return res.status(404).json({ message: "Seller not found" });
@@ -217,5 +243,47 @@ export const verifySeller = async (req, res) => {
   } catch (err) {
     console.error("Error in verifySeller:", err);
     res.status(500).json({ message: "Verification failed in backmacha" });
+  }
+};
+
+
+// Public artisan profile (no auth needed). `isFollowing` is filled in when the
+// visitor happens to be a logged-in buyer.
+export const getPublicSeller = async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!mongoose.isValidObjectId(id)) {
+      return res.status(404).json({ message: "Artisan not found" });
+    }
+
+    const seller = await Seller.findById(id).select(
+      "businessName fullName description profilePic verified rating totalReviews state city createdAt followers"
+    );
+    if (!seller) return res.status(404).json({ message: "Artisan not found" });
+
+    const productsCount = await Product.countDocuments({ seller: id, isActive: true });
+    const isFollowing =
+      req.user?.type === "user" &&
+      (req.user.follows || []).some((f) => f.toString() === id);
+
+    res.json({
+      _id: seller._id,
+      businessName: seller.businessName,
+      fullName: seller.fullName,
+      description: seller.description,
+      profilePic: seller.profilePic,
+      verified: seller.verified,
+      rating: seller.rating,
+      totalReviews: seller.totalReviews,
+      state: seller.state,
+      city: seller.city,
+      createdAt: seller.createdAt,
+      followersCount: seller.followers?.length || 0,
+      productsCount,
+      isFollowing,
+    });
+  } catch (error) {
+    console.error("Error in getPublicSeller:", error);
+    res.status(500).json({ message: "Internal server error" });
   }
 };

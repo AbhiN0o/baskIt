@@ -1,13 +1,16 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams, Link } from 'react-router-dom';
+import { toast } from 'react-hot-toast';
 import {
-  User, MapPin, Mail, Phone, Calendar,
+  User, MapPin, Mail, Calendar,
   Package, Truck, CheckCircle2, Clock, X,
-  ArrowLeft, Star, Eye, ShoppingBag, Camera
+  ArrowLeft, Star, Eye, ShoppingBag, Camera, Heart, Pencil
 } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getUserOrders, updateUserProfile } from '../lib/api';
+import { getUserOrders, updateUserProfile, updateUserDetails, getFavorites, removeFavorite } from '../lib/api';
+import RegionSelect from '../components/RegionSelect';
+import { errMsg, inr } from '../lib/errors';
 import useAuthUser from '../hooks/useAuthUser';
 
 const STATUS_CONFIG = {
@@ -24,7 +27,11 @@ export default function UserProfilePage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
-  const [activeTab, setActiveTab] = useState('profile');
+  const [searchParams] = useSearchParams();
+  const initialTab = ['profile', 'orders', 'saved'].includes(searchParams.get('tab')) ? searchParams.get('tab') : 'profile';
+  const [activeTab, setActiveTab] = useState(initialTab);
+  const [editingAddress, setEditingAddress] = useState(false);
+  const [addressForm, setAddressForm] = useState({ address: '', state: '', city: '' });
   const [selectedFile, setSelectedFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState('');
 
@@ -37,15 +44,42 @@ export default function UserProfilePage() {
   const updateProfileMutation = useMutation({
     mutationFn: updateUserProfile,
     onSuccess: () => {
-      queryClient.invalidateQueries(['authUser']);
+      queryClient.invalidateQueries({ queryKey: ['authUser'] });
       setSelectedFile(null);
       setPreviewUrl('');
-      alert('Profile picture updated!');
+      toast.success('Profile picture updated');
     },
-    onError: (error) => {
-      alert(error.response?.data?.message || 'Failed to update profile picture');
-    }
+    onError: (error) => toast.error(errMsg(error, 'Failed to update profile picture')),
   });
+
+  const detailsMutation = useMutation({
+    mutationFn: updateUserDetails,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['authUser'] });
+      setEditingAddress(false);
+      toast.success('Delivery details saved');
+    },
+    onError: (error) => toast.error(errMsg(error, 'Could not save details')),
+  });
+
+  const { data: favorites = [], isLoading: favoritesLoading } = useQuery({
+    queryKey: ['favorites'],
+    queryFn: getFavorites,
+    enabled: !!authUser,
+  });
+  const unsaveMutation = useMutation({
+    mutationFn: removeFavorite,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['favorites'] });
+      queryClient.invalidateQueries({ queryKey: ['authUser'] });
+    },
+    onError: (error) => toast.error(errMsg(error, 'Could not remove item')),
+  });
+
+  const startEditingAddress = () => {
+    setAddressForm({ address: authUser.address || '', state: authUser.state || '', city: authUser.city || '' });
+    setEditingAddress(true);
+  };
 
   const handleFileSelect = (e) => {
     const file = e.target.files[0];
@@ -165,12 +199,12 @@ export default function UserProfilePage() {
                 {selectedFile && (
                   <motion.button
                     onClick={handleSaveProfile}
-                    disabled={updateProfileMutation.isLoading}
+                    disabled={updateProfileMutation.isPending}
                     className="px-3 py-1.5 bg-amber-400 text-stone-950 font-bold text-xs uppercase tracking-widest hover:bg-amber-300 transition-all disabled:opacity-50"
                     whileHover={{ scale: 1.02 }}
                     whileTap={{ scale: 0.98 }}
                   >
-                    {updateProfileMutation.isLoading ? 'Saving...' : 'Save Photo'}
+                    {updateProfileMutation.isPending ? 'Saving...' : 'Save Photo'}
                   </motion.button>
                 )}
               </div>
@@ -207,7 +241,8 @@ export default function UserProfilePage() {
         <div className="flex mb-6 border-b border-stone-800">
           {[
             { id: 'profile', label: 'Profile Info', icon: User },
-            { id: 'orders', label: 'Order History', icon: Package, count: orders.length }
+            { id: 'orders', label: 'Order History', icon: Package, count: orders.length },
+            { id: 'saved', label: 'Saved', icon: Heart, count: favorites.length }
           ].map((tab) => {
             const Icon = tab.icon;
             return (
@@ -252,7 +287,6 @@ export default function UserProfilePage() {
                     {[
                       { icon: User, label: 'Full Name', value: authUser.fullName || 'Not provided' },
                       { icon: Mail, label: 'Email', value: authUser.email },
-                      { icon: Phone, label: 'Phone', value: authUser.phone || 'Not provided' },
                     ].map(({ icon: Icon, label, value }) => (
                       <div key={label} className="flex items-center gap-4 px-6 py-4">
                         <Icon className="text-amber-400 flex-shrink-0" size={16} />
@@ -268,18 +302,50 @@ export default function UserProfilePage() {
                 {/* Address + Stats */}
                 <div className="space-y-4">
                   <div className="border border-stone-800">
-                    <div className="px-6 py-4 border-b border-stone-800">
-                      <span className="text-stone-200 font-black text-xs uppercase tracking-widest">Address</span>
+                    <div className="px-6 py-4 border-b border-stone-800 flex items-center justify-between">
+                      <span className="text-stone-200 font-black text-xs uppercase tracking-widest">Delivery &amp; Region</span>
+                      {!editingAddress && (
+                        <button onClick={startEditingAddress} className="flex items-center gap-1 text-stone-500 hover:text-amber-400 text-xs uppercase tracking-widest font-bold transition-colors">
+                          <Pencil size={11} /> Edit
+                        </button>
+                      )}
                     </div>
-                    <div className="px-6 py-4 flex items-start gap-3">
-                      <MapPin className="text-amber-400 flex-shrink-0 mt-0.5" size={16} />
-                      <div>
-                        <div className="text-stone-600 text-xs uppercase tracking-widest mb-1">Delivery Address</div>
-                        <div className="text-stone-200 text-sm leading-relaxed">
-                          {authUser.address || 'No address on file'}
+                    {editingAddress ? (
+                      <div className="p-6 space-y-4">
+                        <div>
+                          <label className="text-stone-600 text-xs uppercase tracking-widest block mb-1">Delivery address</label>
+                          <textarea
+                            rows={3}
+                            value={addressForm.address}
+                            onChange={(e) => setAddressForm({ ...addressForm, address: e.target.value })}
+                            placeholder="House no., street, area, pincode"
+                            className="w-full bg-stone-900 border border-stone-700 text-stone-200 text-sm p-3 focus:outline-none focus:border-amber-400 resize-none"
+                          />
+                        </div>
+                        <RegionSelect state={addressForm.state} city={addressForm.city} onChange={(r) => setAddressForm({ ...addressForm, ...r })} />
+                        <div className="flex gap-2">
+                          <button
+                            disabled={!addressForm.state || !addressForm.city || detailsMutation.isPending}
+                            onClick={() => detailsMutation.mutate(addressForm)}
+                            className="px-5 py-2.5 bg-amber-400 text-stone-950 font-bold text-xs uppercase tracking-widest hover:bg-amber-300 disabled:opacity-40 disabled:cursor-not-allowed"
+                          >
+                            {detailsMutation.isPending ? 'Saving...' : 'Save'}
+                          </button>
+                          <button onClick={() => setEditingAddress(false)} className="px-5 py-2.5 border border-stone-700 text-stone-400 text-xs font-bold uppercase tracking-widest hover:border-stone-500">Cancel</button>
                         </div>
                       </div>
-                    </div>
+                    ) : (
+                      <div className="px-6 py-4 flex items-start gap-3">
+                        <MapPin className="text-amber-400 flex-shrink-0 mt-0.5" size={16} />
+                        <div>
+                          <div className="text-stone-600 text-xs uppercase tracking-widest mb-1">Delivery Address</div>
+                          <div className="text-stone-200 text-sm leading-relaxed">{authUser.address || 'No address on file'}</div>
+                          <div className="text-stone-500 text-xs mt-2">
+                            {[authUser.city, authUser.state].filter(Boolean).join(', ') || 'No region set - add one to see artisans near you'}
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   <div className="border border-stone-800">
@@ -299,6 +365,39 @@ export default function UserProfilePage() {
                   </div>
                 </div>
               </div>
+            </motion.div>
+          )}
+
+          {activeTab === 'saved' && (
+            <motion.div key="saved" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} transition={{ duration: 0.3 }}>
+              {favoritesLoading ? (
+                <div className="text-center py-20 text-stone-600 text-xs uppercase tracking-widest animate-pulse">Loading saved items...</div>
+              ) : favorites.length === 0 ? (
+                <div className="text-center py-24 border border-dashed border-stone-800">
+                  <Heart className="mx-auto text-stone-700 mb-4" size={40} />
+                  <h4 className="text-stone-300 font-black text-lg mb-2">Nothing saved yet</h4>
+                  <p className="text-stone-600 text-sm mb-6">Tap the heart on any product to keep it here.</p>
+                  <button onClick={() => navigate('/market')} className="px-6 py-3 bg-amber-400 text-stone-950 font-bold text-xs uppercase tracking-widest hover:bg-amber-300 transition-all">Browse local crafts →</button>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-px bg-stone-800">
+                  {favorites.map((p) => (
+                    <div key={p._id} className="bg-stone-950 group">
+                      <Link to={`/product/${p._id}`} className="block overflow-hidden" style={{ aspectRatio: '4/3' }}>
+                        <img src={p.images?.[0]} alt={p.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+                      </Link>
+                      <div className="p-5 border-t border-stone-800">
+                        <h4 className="text-stone-100 font-bold truncate">{p.title.replace(/"/g, '').trim()}</h4>
+                        <div className="text-stone-600 text-xs mt-1">{p.seller?.businessName}{p.city ? ` · ${p.city}` : ''}</div>
+                        <div className="flex items-center justify-between mt-3">
+                          <span className="text-amber-400 font-black">{inr(p.price)}</span>
+                          <button onClick={() => unsaveMutation.mutate(p._id)} className="text-stone-500 hover:text-red-400 text-xs uppercase tracking-widest font-bold transition-colors">Remove</button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </motion.div>
           )}
 

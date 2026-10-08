@@ -4,11 +4,10 @@ import Home from "./pages/Home.jsx";
 import ArtisanMarketplace from "./pages/MarketPlace.jsx";
 import ProductDetailPage from "./pages/ProductDetail.jsx";
 import SellerProfilePage from "./pages/SellerProfile.jsx";
-import UserProfilePage from "./pages/UserPofilePage.jsx"; // Note: Fix typo to UserProfilePage.jsx if needed
-import SellerAddItemPage from "./pages/AddItem.jsx";
+import UserProfilePage from "./pages/UserPofilePage.jsx";
 import UserSignupPage from "./pages/UserSignup.jsx";
 import SellerSignupPage from "./pages/SellerSignup.jsx";
-import useAuthUser from "./hooks/useAuthUser"; // Adjust path
+import useAuthUser from "./hooks/useAuthUser";
 import SellerCorner from "./pages/SellerCorner.jsx";
 import CartPage from "./pages/Cart.jsx";
 import Dashboard from "./pages/Dashboard.jsx";
@@ -24,6 +23,9 @@ import AdminOrderManagement from "./pages/AdminOrderManagement.jsx";
 function App() {
   const { isLoading, authUser, type } = useAuthUser();
   const isAuthenticated = Boolean(authUser);
+  const homeFor = (t) => (t === "seller" ? "/seller/dashboard" : "/market");
+  const sellerOnly = (page) =>
+    isAuthenticated && type === "seller" ? page : <Navigate to="/seller/login" replace />;
 
   if (isLoading) {
     return <BouncingDotsLoader />;
@@ -60,80 +62,54 @@ function App() {
 
         <Route path="/market" element={<ArtisanMarketplace />} />
 
-        <Route path="/orders/:orderId" element={<OrderDetailsPage />} />
-
         <Route
-          path="/sellermarket"
-          element={
-            isAuthenticated && type === "seller" ? (
-              <Dashboard />
-            ) : (
-              <Navigate to="/market" />
-            )
-          }
+          path="/orders/:orderId"
+          element={isAuthenticated && type === "user" ? <OrderDetailsPage /> : <Navigate to="/user/login" />}
         />
 
         <Route path="/product/:id" element={<ProductDetailPage />} />
 
-        <Route
-          path="/seller/:id"
-          element={isAuthenticated ? <SellerProfilePage /> : <Navigate to="/user/signup" />}
-        />
+        {/* Public artisan page - anyone can browse a local maker's shop */}
+        <Route path="/seller/:id" element={<SellerProfilePage />} />
 
         <Route
           path="/user"
-          element={isAuthenticated ? <UserProfilePage /> : <Navigate to="/user/signup" />}
-        />
-
-        <Route path="/hi" element={<Home />} />
-
-        <Route
-          path="/add-item"
-          element={isAuthenticated ? <SellerAddItemPage /> : <Navigate to="/seller/signup" />}
+          element={isAuthenticated && type === "user" ? <UserProfilePage /> : <Navigate to="/user/login" />}
         />
 
         <Route
           path="/user/signup"
-          element={!isAuthenticated ? <UserSignupPage /> : <Navigate to="/market" />}
+          element={!isAuthenticated ? <UserSignupPage /> : <Navigate to={homeFor(type)} />}
         />
-
+        <Route
+          path="/user/login"
+          element={!isAuthenticated ? <UserLoginPage /> : <Navigate to={homeFor(type)} />}
+        />
         <Route
           path="/seller/signup"
-          element={!isAuthenticated ? <SellerSignupPage /> : <Navigate to="/sellermarket" />}
+          element={!isAuthenticated ? <SellerSignupPage /> : <Navigate to={homeFor(type)} />}
         />
-
         <Route
-          path="/seller/dashboard"
-          element={isAuthenticated && type === "seller" ? <SellerCorner /> : <Navigate to="/market" />}
+          path="/seller/login"
+          element={!isAuthenticated ? <SellerLoginPage /> : <Navigate to={homeFor(type)} />}
         />
 
         <Route
           path="/cart"
-          element={isAuthenticated && type === "user" ? <CartPage /> : <Navigate to="/" />}
+          element={isAuthenticated && type === "user" ? <CartPage /> : <Navigate to="/user/login" />}
         />
 
-        <Route
-          path="/seller/login"
-          element={!isAuthenticated ? <SellerLoginPage /> : <Navigate to="/sellermarket" />}
-        />
+        {/* Seller area */}
+        <Route path="/seller/dashboard" element={sellerOnly(<Dashboard />)} />
+        <Route path="/seller/products" element={sellerOnly(<SellerCorner />)} />
+        <Route path="/seller/orders" element={sellerOnly(<AdminOrderManagement />)} />
 
-        <Route
-          path="/user/login"
-          element={!isAuthenticated ? <UserLoginPage /> : <Navigate to="/market" />}
-        />
-
+        {/* Old URLs kept so existing emails/bookmarks still work */}
+        <Route path="/sellermarket" element={<Navigate to="/seller/dashboard" replace />} />
         <Route path="/sellermarket/verify" element={<VerifySeller />} />
+        <Route path="/admin" element={<Navigate to="/seller/orders" replace />} />
 
-        <Route
-          path="/admin"
-          element={
-            type === "seller" && authUser.email === "abhinav@gmail.com"
-              ? <AdminOrderManagement />
-              : type === "user"
-              ? <Navigate to="/market" />
-              : <Navigate to="/sellermarket" />
-          }
-        />
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
 
       <NavigationBar />

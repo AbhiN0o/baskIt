@@ -55,6 +55,8 @@ const sellerSchema = new mongoose.Schema(
         ref: "User",
       }
     ],
+    state: { type: String, default: "", index: true },
+    city: { type: String, default: "", index: true },
     verificationToken: { type: String },               // hashed token
     verificationTokenExpires: { type: Date }, // expiry time
   },

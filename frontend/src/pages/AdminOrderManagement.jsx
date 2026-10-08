@@ -1,12 +1,14 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useNavigate } from 'react-router-dom';
+import { toast } from 'react-hot-toast';
 import {
-  ArrowLeft, Package, Truck, CheckCircle2, Clock, X,
+  Package, Truck, CheckCircle2, Clock, X,
   Search, Trash2, User, Calendar, DollarSign, RefreshCw
 } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getAllOrders, updateOrderStatus, deleteOrder } from '../lib/api';
+import { getSellerOrders, updateOrderStatus, deleteOrder } from '../lib/api';
+import { errMsg } from '../lib/errors';
+import SellerNav from '../components/SellerNav';
 import { BouncingDotsLoader } from '../components/Loading.jsx';
 
 const STATUS_ICONS = { pending: Clock, processing: Package, shipped: Truck, delivered: CheckCircle2, cancelled: X };
@@ -20,7 +22,6 @@ const STATUS_STYLES = {
 const PAYMENT_STYLES = { pending: 'text-yellow-400', completed: 'text-green-400', failed: 'text-red-400' };
 
 export default function AdminOrderManagement() {
-  const navigate = useNavigate();
   const queryClient = useQueryClient();
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -28,20 +29,28 @@ export default function AdminOrderManagement() {
   const [paymentFilter, setPaymentFilter] = useState('all');
 
   const { data: orders = [], isLoading, error, refetch } = useQuery({
-    queryKey: ['allOrders'],
-    queryFn: getAllOrders,
+    queryKey: ['sellerOrders'],
+    queryFn: getSellerOrders,
   });
 
   const updateStatusMutation = useMutation({
     mutationFn: ({ orderId, statusData }) => updateOrderStatus(orderId, statusData),
-    onSuccess: () => { queryClient.invalidateQueries(['allOrders']); alert('Order status updated!'); },
-    onError: (error) => { alert(error.response?.data?.message || 'Failed to update order status'); }
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['sellerOrders'] });
+      queryClient.invalidateQueries({ queryKey: ['sellerStats'] });
+      toast.success('Order updated');
+    },
+    onError: (error) => toast.error(errMsg(error, 'Failed to update order status')),
   });
 
   const deleteOrderMutation = useMutation({
     mutationFn: deleteOrder,
-    onSuccess: () => { queryClient.invalidateQueries(['allOrders']); alert('Order deleted!'); },
-    onError: (error) => { alert(error.response?.data?.message || 'Failed to delete order'); }
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['sellerOrders'] });
+      queryClient.invalidateQueries({ queryKey: ['sellerStats'] });
+      toast.success('Order deleted');
+    },
+    onError: (error) => toast.error(errMsg(error, 'Failed to delete order')),
   });
 
   const handleStatusChange = (orderId, field, value) => {
@@ -88,42 +97,21 @@ export default function AdminOrderManagement() {
 
   return (
     <div className="min-h-screen bg-stone-950">
-      {/* Header */}
-      <motion.header
-        className="sticky top-0 z-50 bg-stone-950/95 backdrop-blur-sm border-b border-stone-800"
-        initial={{ y: -60, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        transition={{ duration: 0.4 }}
-      >
-        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <motion.button
-              className="p-2 text-stone-500 hover:text-stone-200 transition-colors border border-stone-800 hover:border-stone-600"
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
-              onClick={() => navigate('/seller/dashboard')}
-            >
-              <ArrowLeft size={16} />
-            </motion.button>
-            <div>
-              <div className="flex items-center gap-2">
-                <div className="w-4 h-4 bg-amber-400 rounded-sm" />
-                <span className="text-stone-100 font-black tracking-widest text-sm uppercase">Order Management</span>
-              </div>
-              <p className="text-stone-600 text-xs">{filteredOrders.length} orders found</p>
-            </div>
-          </div>
-          <motion.button
-            onClick={() => refetch()}
-            className="p-2 text-stone-500 hover:text-amber-400 transition-colors border border-stone-800 hover:border-amber-400"
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
-            title="Refresh"
-          >
-            <RefreshCw size={14} />
-          </motion.button>
+      <SellerNav />
+      <div className="max-w-7xl mx-auto px-6 pt-8 flex items-end justify-between">
+        <div>
+          <span className="text-amber-400 text-xs tracking-[0.3em] uppercase font-medium block mb-1">Seller Studio</span>
+          <h1 className="text-2xl font-black text-stone-100">Orders for your products</h1>
+          <p className="text-stone-600 text-xs mt-1">{filteredOrders.length} orders found</p>
         </div>
-      </motion.header>
+        <button
+          onClick={() => refetch()}
+          className="p-2 text-stone-500 hover:text-amber-400 transition-colors border border-stone-800 hover:border-amber-400"
+          title="Refresh"
+        >
+          <RefreshCw size={14} />
+        </button>
+      </div>
 
       <div className="max-w-7xl mx-auto px-6 py-10">
         {/* Stats Row */}
@@ -283,7 +271,7 @@ export default function AdminOrderManagement() {
                       <select
                         value={order.orderStatus}
                         onChange={(e) => handleStatusChange(order._id, 'orderStatus', e.target.value)}
-                        disabled={updateStatusMutation.isLoading}
+                        disabled={updateStatusMutation.isPending}
                         className={`w-full border py-1.5 px-2 text-xs font-bold uppercase tracking-wide focus:outline-none focus:border-amber-400 transition-colors appearance-none cursor-pointer ${STATUS_STYLES[order.orderStatus] || ''}`}
                         style={{ backgroundColor: 'transparent' }}
                       >
@@ -298,7 +286,7 @@ export default function AdminOrderManagement() {
                       <select
                         value={order.paymentStatus}
                         onChange={(e) => handleStatusChange(order._id, 'paymentStatus', e.target.value)}
-                        disabled={updateStatusMutation.isLoading}
+                        disabled={updateStatusMutation.isPending}
                         className="w-full bg-stone-900 border border-stone-700 py-1.5 px-2 text-stone-300 text-xs focus:outline-none focus:border-amber-400 transition-colors appearance-none cursor-pointer"
                       >
                         {['pending', 'completed', 'failed'].map(s => (
@@ -314,7 +302,7 @@ export default function AdminOrderManagement() {
                       </div>
                       <motion.button
                         onClick={() => handleDeleteOrder(order._id)}
-                        disabled={deleteOrderMutation.isLoading}
+                        disabled={deleteOrderMutation.isPending}
                         className="p-2 border border-stone-800 text-stone-600 hover:border-red-500/50 hover:text-red-400 transition-all"
                         whileHover={{ scale: 1.05 }}
                         whileTap={{ scale: 0.95 }}

@@ -1,6 +1,7 @@
 import Cart from "../models/cart.model.js";
 import Product from "../models/product.model.js";
 import Order from "../models/order.model.js";
+import { reserveStock, releaseStock } from "../lib/stock.js";
 
 export const getCart = async (req, res) => {
   try {
@@ -125,26 +126,51 @@ export const checkoutCart = async (req, res) => {
   try {
     const { shippingAddress, paymentMethod } = req.body;
 
+    if (!shippingAddress) {
+      return res.status(400).json({ message: "Shipping address is required" });
+    }
+
     const cart = await Cart.findOne({ user: req.user._id }).populate("products.product");
     if (!cart || cart.products.length === 0)
       return res.status(400).json({ message: "Cart is empty" });
 
-    const orderProducts = cart.products.map(item => ({
+    // Skip items whose product was deleted since being added to the cart
+    const items = cart.products.filter((item) => item.product);
+    if (items.length === 0) return res.status(400).json({ message: "Cart is empty" });
+
+    // Price from the live product, not the cart's stored total (which can be stale)
+    const orderProducts = items.map((item) => ({
       product: item.product._id,
       quantity: item.quantity,
       price: item.product.price,
     }));
+    const totalAmount = orderProducts.reduce((sum, l) => sum + l.price * l.quantity, 0);
+
+    // Atomic, all-or-nothing stock reservation (see lib/stock.js)
+    const stockLines = orderProducts.map((l) => ({ productId: l.product, quantity: l.quantity }));
+    const reservation = await reserveStock(stockLines);
+    if (!reservation.ok) {
+      const failed = items.find((i) => i.product._id.toString() === reservation.failedProductId.toString());
+      return res.status(409).json({
+        message: `Sorry, "${failed?.product.title || "an item"}" just sold out or doesn't have enough stock left`,
+      });
+    }
 
     const order = new Order({
       user: req.user._id,
       products: orderProducts,
-      totalAmount: cart.totalAmount,
+      totalAmount,
       shippingAddress,
       paymentMethod: paymentMethod || "cod",
       paymentStatus: paymentMethod === "online" ? "pending" : "completed",
     });
 
-    await order.save();
+    try {
+      await order.save();
+    } catch (saveErr) {
+      await releaseStock(stockLines);
+      throw saveErr;
+    }
 
     cart.products = [];
     cart.totalAmount = 0;

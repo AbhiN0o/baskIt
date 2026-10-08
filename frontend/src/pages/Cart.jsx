@@ -1,66 +1,61 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
-import PrizeGrid from '../components/PrizeGrid';
+import { toast } from 'react-hot-toast';
+import { errMsg, inr } from '../lib/errors';
 import {
   ShoppingBag, Trash2, Plus, Minus, Heart,
-  ArrowLeft, Tag, Truck, Shield, Star,
-  CreditCard, CheckCircle2, Loader, X
+  ArrowLeft, Truck, Shield,
+  CreditCard, Loader, MapPin
 } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getCart, updateCartItem, removeCartItem, clearCart, createOrder } from '../lib/api';
+import { getCart, updateCartItem, removeCartItem, clearCart, createOrder, addFavorite } from '../lib/api';
 import useAuthUser from '../hooks/useAuthUser';
 
 export default function CartPage() {
-  const { isLoading: aha, authUser } = useAuthUser();
+  const { authUser } = useAuthUser();
   const navigate = useNavigate();
 
-  const [discountCode, setDiscountCode] = useState('');
-  const [appliedDiscount, setAppliedDiscount] = useState(null);
-  const [selectedShipping, setSelectedShipping] = useState('standard');
   const [mounted, setMounted] = useState(false);
-  const [savedItems, setSavedItems] = useState([]);
-  const [showPrizeGrid, setShowPrizeGrid] = useState(false);
-  const [prizeApplied, setPrizeApplied] = useState(false);
 
   const queryClient = useQueryClient();
 
   const { data: cart, isLoading, error } = useQuery({ queryKey: ['cart'], queryFn: getCart });
 
-  const updateQuantityMutation = useMutation({ mutationFn: updateCartItem, onSuccess: () => queryClient.invalidateQueries(['cart']) });
-  const removeItemMutation = useMutation({ mutationFn: removeCartItem, onSuccess: () => queryClient.invalidateQueries(['cart']) });
-  const clearCartMutation = useMutation({ mutationFn: clearCart, onSuccess: () => queryClient.invalidateQueries(['cart']) });
+  const refreshCart = () => queryClient.invalidateQueries({ queryKey: ['cart'] });
+  const updateQuantityMutation = useMutation({
+    mutationFn: updateCartItem,
+    onSuccess: refreshCart,
+    onError: (e) => toast.error(errMsg(e, 'Could not update quantity')),
+  });
+  const removeItemMutation = useMutation({ mutationFn: removeCartItem, onSuccess: refreshCart });
+  const clearCartMutation = useMutation({ mutationFn: clearCart, onSuccess: refreshCart });
+  const saveForLaterMutation = useMutation({
+    mutationFn: async (productId) => {
+      await addFavorite(productId);
+      await removeCartItem(productId);
+    },
+    onSuccess: () => {
+      refreshCart();
+      queryClient.invalidateQueries({ queryKey: ['authUser'] });
+      toast.success('Moved to your saved items');
+    },
+    onError: (e) => toast.error(errMsg(e, 'Could not save for later')),
+  });
 
   const checkoutMutation = useMutation({
     mutationFn: createOrder,
     onSuccess: (response) => {
-      queryClient.invalidateQueries(['cart']);
+      // the server already stock-checked and priced this order; now empty the cart
       clearCartMutation.mutate();
-      alert('Order placed successfully!');
+      queryClient.invalidateQueries({ queryKey: ['userOrders'] });
+      toast.success('Order placed!');
       navigate(`/orders/${response.order._id}`);
     },
-    onError: (error) => { alert(error.response?.data?.message || 'Failed to place order'); }
+    onError: (error) => toast.error(errMsg(error, 'Failed to place order')),
   });
 
-  const shippingOptions = [
-    { id: 'standard', name: 'Standard Delivery', time: '5-7 business days', price: 0 },
-    { id: 'express', name: 'Express Delivery', time: '2-3 business days', price: 15 },
-    { id: 'overnight', name: 'Overnight', time: 'Next business day', price: 35 }
-  ];
-
-  const discountCodes = {
-    'WELCOME10': { type: 'percentage', value: 10, description: '10% off your order' },
-    'SAVE20': { type: 'fixed', value: 20, description: '$20 off orders over $100' },
-    'FREESHIP': { type: 'shipping', value: 0, description: 'Free shipping' }
-  };
-
   useEffect(() => { setMounted(true); }, []);
-
-  useEffect(() => {
-    if (!mounted || prizeApplied || !cart) return;
-    const subtotal = cart.products.reduce((sum, item) => sum + item.product.price * item.quantity, 0);
-    if (subtotal > 50) setShowPrizeGrid(true);
-  }, [cart, mounted, prizeApplied]);
 
   const cartItems = cart?.products || [];
 
@@ -69,31 +64,21 @@ export default function CartPage() {
     updateQuantityMutation.mutate({ productId, quantity: newQuantity });
   };
   const removeItem = (productId) => removeItemMutation.mutate(productId);
-  const saveForLater = (productId) => {
-    const item = cartItems.find(i => i.product._id === productId);
-    if (item) { setSavedItems(prev => [...prev, { ...item }]); removeItem(productId); }
-  };
-  const applyDiscountCode = () => {
-    const discount = discountCodes[discountCode.toUpperCase()];
-    if (discount) { setAppliedDiscount(discount); setDiscountCode(''); }
-  };
-  const handleCheckout = async () => {
-    if (!authUser) { alert('Please login to proceed with checkout'); return; }
-    if (!authUser.address) { alert('Please update your address in profile to proceed with checkout'); return; }
-    const orderData = {
-      products: cartItems.map(item => ({ productId: item.product._id, quantity: item.quantity })),
-      shippingAddress: authUser.address,
-      paymentMethod: 'cod'
-    };
-    checkoutMutation.mutate(orderData);
+  const saveForLater = (productId) => saveForLaterMutation.mutate(productId);
+
+  const handleCheckout = () => {
+    if (!authUser) { toast('Please login to proceed with checkout'); return; }
+    if (!authUser.address) { toast.error('Please add a delivery address in your profile first'); navigate('/user?tab=profile'); return; }
+    checkoutMutation.mutate({
+      products: cartItems.map((item) => ({ productId: item.product._id, quantity: item.quantity })),
+      shippingAddress: [authUser.address, authUser.city, authUser.state].filter(Boolean).join(', '),
+      paymentMethod: 'cod',
+    });
   };
 
-  const subtotal = cartItems.reduce((sum, item) => sum + (item.product.price * item.quantity), 0);
-  const shippingCost = appliedDiscount?.type === 'shipping' ? 0 : shippingOptions.find(o => o.id === selectedShipping)?.price || 0;
-  const discountAmount = appliedDiscount?.type === 'percentage' ? (subtotal * appliedDiscount.value / 100) :
-    appliedDiscount?.type === 'fixed' ? Math.min(appliedDiscount.value, subtotal) : 0;
-  const tax = (subtotal - discountAmount) * 0.08;
-  const total = subtotal - discountAmount + shippingCost + tax;
+  // What you see is exactly what the server will charge: the sum of item prices.
+  const subtotal = cartItems.reduce((sum, item) => sum + item.product.price * item.quantity, 0);
+  const total = subtotal;
 
   if (!mounted || isLoading) {
     return (
@@ -162,11 +147,11 @@ export default function CartPage() {
                   </h2>
                   <button
                     onClick={() => clearCartMutation.mutate()}
-                    disabled={clearCartMutation.isLoading}
+                    disabled={clearCartMutation.isPending}
                     className="text-stone-600 hover:text-red-400 transition-colors text-xs uppercase tracking-widest flex items-center gap-1"
                   >
                     <X size={12} />
-                    {clearCartMutation.isLoading ? 'Clearing...' : 'Clear All'}
+                    {clearCartMutation.isPending ? 'Clearing...' : 'Clear All'}
                   </button>
                 </div>
 
@@ -230,7 +215,7 @@ export default function CartPage() {
                             </div>
 
                             <div className="flex items-center gap-3">
-                              <span className="text-stone-500 text-xs">Total: <span className="text-stone-300">${(item.product.price * item.quantity).toFixed(2)}</span></span>
+                              <span className="text-stone-500 text-xs">Total: <span className="text-stone-300">{inr(item.product.price * item.quantity)}</span></span>
                               <motion.button
                                 onClick={() => saveForLater(item.product._id)}
                                 className="p-1.5 text-stone-600 hover:text-amber-400 transition-colors"
@@ -275,94 +260,25 @@ export default function CartPage() {
                     <div className="border border-stone-700 p-3">
                       <div className="text-stone-500 text-xs uppercase tracking-widest mb-1">Shipping To</div>
                       <p className="text-stone-300 text-sm">{authUser.address}</p>
+                      {(authUser.city || authUser.state) && (
+                        <p className="text-stone-500 text-xs mt-1 flex items-center gap-1"><MapPin size={10} /> {[authUser.city, authUser.state].filter(Boolean).join(', ')}</p>
+                      )}
                     </div>
                   )}
 
-                  {/* Promo Code */}
-                  <div>
-                    <label className="text-stone-500 text-xs uppercase tracking-widest block mb-2">Promo Code</label>
-                    <div className="flex">
-                      <input
-                        type="text"
-                        placeholder="Enter code"
-                        value={discountCode}
-                        onChange={(e) => setDiscountCode(e.target.value)}
-                        className="flex-1 bg-stone-900 border border-stone-700 border-r-0 px-3 py-2 text-stone-200 placeholder-stone-600 focus:outline-none focus:border-amber-400 text-sm transition-colors"
-                      />
-                      <motion.button
-                        onClick={applyDiscountCode}
-                        className="px-4 py-2 bg-amber-400 text-stone-950 font-bold text-xs tracking-widest uppercase hover:bg-amber-300 transition-all"
-                        whileTap={{ scale: 0.97 }}
-                      >
-                        Apply
-                      </motion.button>
-                    </div>
-                    {appliedDiscount && (
-                      <div className="mt-2 text-amber-400 text-xs flex items-center gap-1">
-                        <Tag size={11} /> {appliedDiscount.description} applied!
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Shipping Options */}
-                  <div>
-                    <label className="text-stone-500 text-xs uppercase tracking-widest block mb-2">Shipping</label>
-                    <div className="space-y-1">
-                      {shippingOptions.map((option) => (
-                        <label
-                          key={option.id}
-                          className={`flex items-center justify-between p-3 cursor-pointer transition-all border ${
-                            selectedShipping === option.id
-                              ? 'border-amber-400 bg-amber-400/5'
-                              : 'border-stone-800 hover:border-stone-600'
-                          }`}
-                        >
-                          <div className="flex items-center gap-2">
-                            <input
-                              type="radio"
-                              name="shipping"
-                              value={option.id}
-                              checked={selectedShipping === option.id}
-                              onChange={(e) => setSelectedShipping(e.target.value)}
-                              className="sr-only"
-                            />
-                            <div className={`w-3 h-3 border ${selectedShipping === option.id ? 'border-amber-400 bg-amber-400' : 'border-stone-600'}`} />
-                            <div>
-                              <div className="text-stone-200 text-xs font-semibold">{option.name}</div>
-                              <div className="text-stone-600 text-xs">{option.time}</div>
-                            </div>
-                          </div>
-                          <div className="text-stone-300 font-bold text-xs">
-                            {option.price === 0 ? 'Free' : `$${option.price}`}
-                          </div>
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Totals */}
+                  {/* Totals - exactly what the order will be charged */}
                   <div className="border-t border-stone-800 pt-4 space-y-2">
                     <div className="flex justify-between text-stone-500 text-sm">
-                      <span>Subtotal ({cartItems.reduce((s, i) => s + i.quantity, 0)} items)</span>
-                      <span>${subtotal.toFixed(2)}</span>
-                    </div>
-                    {appliedDiscount && (
-                      <div className="flex justify-between text-amber-400 text-sm">
-                        <span>Discount</span>
-                        <span>-${discountAmount.toFixed(2)}</span>
-                      </div>
-                    )}
-                    <div className="flex justify-between text-stone-500 text-sm">
-                      <span>Shipping</span>
-                      <span>{shippingCost === 0 ? 'Free' : `$${shippingCost.toFixed(2)}`}</span>
+                      <span>Subtotal ({cartItems.reduce((n, i) => n + i.quantity, 0)} items)</span>
+                      <span>{inr(subtotal)}</span>
                     </div>
                     <div className="flex justify-between text-stone-500 text-sm">
-                      <span>Tax (8%)</span>
-                      <span>${tax.toFixed(2)}</span>
+                      <span className="flex items-center gap-1"><Truck size={12} /> Delivery</span>
+                      <span>Arranged by the artisan</span>
                     </div>
                     <div className="flex justify-between text-stone-100 font-black text-lg border-t border-stone-700 pt-2 mt-2">
                       <span>Total</span>
-                      <span>${total.toFixed(2)}</span>
+                      <span>{inr(total)}</span>
                     </div>
                   </div>
 
@@ -375,19 +291,19 @@ export default function CartPage() {
                   {/* Checkout Button */}
                   <motion.button
                     onClick={handleCheckout}
-                    disabled={checkoutMutation.isLoading || !authUser}
+                    disabled={checkoutMutation.isPending || !authUser}
                     className={`w-full py-4 font-black text-sm tracking-widest uppercase flex items-center justify-center gap-2 transition-all ${
-                      checkoutMutation.isLoading || !authUser
+                      checkoutMutation.isPending || !authUser
                         ? 'bg-stone-800 text-stone-600 cursor-not-allowed'
                         : 'bg-amber-400 text-stone-950 hover:bg-amber-300'
                     }`}
-                    whileHover={!checkoutMutation.isLoading && authUser ? { scale: 1.01 } : {}}
-                    whileTap={!checkoutMutation.isLoading && authUser ? { scale: 0.98 } : {}}
+                    whileHover={!checkoutMutation.isPending && authUser ? { scale: 1.01 } : {}}
+                    whileTap={!checkoutMutation.isPending && authUser ? { scale: 0.98 } : {}}
                   >
-                    {checkoutMutation.isLoading ? (
+                    {checkoutMutation.isPending ? (
                       <><Loader className="animate-spin" size={16} /> Processing...</>
                     ) : !authUser ? 'Login to Checkout' : (
-                      <><CreditCard size={16} /> Place Order — ${total.toFixed(2)}</>
+                      <><CreditCard size={16} /> Place Order — {inr(total)}</>
                     )}
                   </motion.button>
 
@@ -402,17 +318,6 @@ export default function CartPage() {
         )}
       </div>
 
-      {showPrizeGrid && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
-          <PrizeGrid
-            onWin={(discount) => {
-              if (discount) setAppliedDiscount(discount);
-              setPrizeApplied(true);
-            }}
-            onClose={() => setShowPrizeGrid(false)}
-          />
-        </div>
-      )}
     </div>
   );
 }

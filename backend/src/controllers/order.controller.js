@@ -1,5 +1,13 @@
 import Order from "../models/order.model.js";
 import Product from "../models/product.model.js";
+import { reserveStock, releaseStock } from "../lib/stock.js";
+
+// Orders a seller may touch = orders containing at least one of their products.
+const sellerProductIds = (sellerId) => Product.find({ seller: sellerId }).distinct("_id");
+
+const orderHasSellerItems = (order, idSet) =>
+  order.products.some((l) => idSet.has((l.product?._id || l.product).toString()));
+
 
 export const createOrder = async (req, res) => {
   try {
@@ -31,7 +39,8 @@ export const createOrder = async (req, res) => {
         return res.status(400).json({ message: "Product ID is required for all items" });
       }
 
-      const qty = quantity && quantity > 0 ? quantity : 1;
+      // whole units only (never 0.5, never negative)
+      const qty = Number.isInteger(Number(quantity)) && Number(quantity) > 0 ? Number(quantity) : 1;
 
       // Find and validate product using your model fields
       const productDoc = await Product.findById(productId)
@@ -93,7 +102,18 @@ export const createOrder = async (req, res) => {
       return res.status(400).json({ message: "No valid products to order" });
     }
 
-    // Create the order
+    // Take the stock FIRST, atomically. The earlier stock check above is only
+    // a friendly pre-check; this is the step that actually prevents overselling.
+    const stockLines = validatedProducts.map((item) => ({ productId: item.product, quantity: item.quantity }));
+    const reservation = await reserveStock(stockLines);
+    if (!reservation.ok) {
+      const failed = validatedProducts.find((i) => i.product.toString() === reservation.failedProductId.toString());
+      return res.status(409).json({
+        message: `Sorry, "${failed?.title || "an item"}" just sold out or doesn't have enough stock left`,
+      });
+    }
+
+    // Create the order. If saving fails, give the stock back.
     const order = new Order({
       user: userId,
       products: validatedProducts.map(item => ({
@@ -104,22 +124,14 @@ export const createOrder = async (req, res) => {
       totalAmount,
       shippingAddress,
       paymentMethod: paymentMethod || "cod",
-      status: "pending"
     });
 
-    await order.save();
-
-    // Update product quantities (reduce stock) - using your quantity field
-    const stockUpdates = validatedProducts.map(async (item) => {
-      await Product.findByIdAndUpdate(
-        item.product,
-        { 
-          $inc: { quantity: -item.quantity } // Decrease stock quantity
-        }
-      );
-    });
-
-    await Promise.all(stockUpdates);
+    try {
+      await order.save();
+    } catch (saveErr) {
+      await releaseStock(stockLines);
+      throw saveErr;
+    }
 
     // Populate the order with product details using your model fields
     const populatedOrder = await Order.findById(order._id)
@@ -179,8 +191,23 @@ export const updateOrderStatus = async (req, res) => {
     const order = await Order.findById(req.params.id);
     if (!order) return res.status(404).json({ message: "Order not found" });
 
+    const ids = new Set((await sellerProductIds(req.user._id)).map(String));
+    if (!orderHasSellerItems(order, ids)) {
+      return res.status(403).json({ message: "This order doesn't contain your products" });
+    }
+
+    const wasCancelled = order.orderStatus === "cancelled";
     if (orderStatus) order.orderStatus = orderStatus;
     if (paymentStatus) order.paymentStatus = paymentStatus;
+
+    // Put stock back (once) when an order is cancelled
+    if (orderStatus === "cancelled" && !wasCancelled) {
+      await Promise.all(
+        order.products
+          .filter((l) => ids.has(l.product.toString()))
+          .map((l) => Product.findByIdAndUpdate(l.product, { $inc: { quantity: l.quantity } }))
+      );
+    }
 
     const updatedOrder = await order.save();
     res.json({ message: "Order updated successfully", order: updatedOrder });
@@ -192,9 +219,18 @@ export const updateOrderStatus = async (req, res) => {
 
 export const deleteOrder = async (req, res) => {
   try {
-    const order = await Order.findByIdAndDelete(req.params.id);
+    const order = await Order.findById(req.params.id);
     if (!order) return res.status(404).json({ message: "Order not found" });
 
+    // An order can only be deleted by a seller when EVERY item in it is theirs,
+    // otherwise they'd be erasing other artisans' sales.
+    const ids = new Set((await sellerProductIds(req.user._id)).map(String));
+    const allMine = order.products.every((l) => ids.has(l.product.toString()));
+    if (!allMine) {
+      return res.status(403).json({ message: "This order includes other artisans' products" });
+    }
+
+    await order.deleteOne();
     res.json({ message: "Order deleted successfully" });
   } catch (err) {
     console.error(err);
@@ -202,16 +238,28 @@ export const deleteOrder = async (req, res) => {
   }
 };
 
-export const getAllOrders = async (req, res) => {
+// Orders for the logged-in seller only, trimmed to that seller's line items.
+export const getSellerOrders = async (req, res) => {
   try {
-    const orders = await Order.find()
-      .populate("user", "fullName email")
-      .populate("products.product", "title price")
+    const ids = await sellerProductIds(req.user._id);
+    const idSet = new Set(ids.map(String));
+
+    const orders = await Order.find({ "products.product": { $in: ids } })
+      .populate("user", "fullName email city state")
+      .populate("products.product", "title price images")
       .sort({ createdAt: -1 });
 
-    res.json(orders);
+    const result = orders.map((o) => {
+      const obj = o.toObject();
+      obj.orderTotal = obj.totalAmount;
+      obj.products = obj.products.filter((l) => l.product && idSet.has(l.product._id.toString()));
+      obj.totalAmount = obj.products.reduce((sum, l) => sum + l.price * l.quantity, 0);
+      return obj;
+    });
+
+    res.json(result);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ message: "Internal server error", error: err.message });
-  }
+    res.status(500).json({ message: "Internal server error", error: err.message });
+  }
 };

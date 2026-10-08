@@ -34,6 +34,27 @@ export const protectRoute = async (req, res, next) => {
 };
 
 
+// Like protectRoute, but never rejects: attaches req.user when a valid cookie
+// is present and carries on anonymously otherwise. Used by public pages that
+// want to personalise (e.g. "are you following this artisan?").
+export const optionalAuth = async (req, res, next) => {
+  try {
+    const token = req.cookies.jwt;
+    if (!token) return next();
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    if (decoded.type === "seller") {
+      const seller = await Seller.findById(decoded.id);
+      if (seller) { req.user = seller; req.user.type = "seller"; }
+    } else if (decoded.type === "user") {
+      const user = await User.findById(decoded.id);
+      if (user) { req.user = user; req.user.type = "user"; }
+    }
+  } catch {
+    // invalid/expired token -> treat as anonymous
+  }
+  next();
+};
+
 export const sellerOnly = (req, res, next) => {
   try {
     if (!req.user || req.user.type !== "seller") {

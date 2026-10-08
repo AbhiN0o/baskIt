@@ -1,12 +1,13 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { motion } from "framer-motion";
-import { User, Mail, Lock, MapPin, Calendar, ArrowRight } from "lucide-react";
+import { User, Mail, Lock, MapPin, ArrowRight } from "lucide-react";
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { userSignup } from '../lib/api.js';
+import RegionSelect from '../components/RegionSelect';
 
 export default function UserSignupPage() {
   const [signupData, setSignupData] = useState({
-    fullName: '', email: '', password: '', address: '', dob: '',
+    fullName: '', email: '', password: '', address: '', state: '', city: '',
   });
   const [focused, setFocused] = useState(null);
   const [step, setStep] = useState(1); // 2-step form
@@ -30,8 +31,7 @@ export default function UserSignupPage() {
   ];
 
   const fields2 = [
-    { key: 'address', label: 'Delivery Address', icon: MapPin, type: 'text', placeholder: '123 Artisan Lane, NY' },
-    { key: 'dob', label: 'Date of Birth', icon: Calendar, type: 'date', placeholder: '' },
+    { key: 'address', label: 'Delivery Address', icon: MapPin, type: 'text', placeholder: 'House no., street, area, pincode' },
   ];
 
   const activeFields = step === 1 ? fields1 : fields2;
@@ -66,7 +66,7 @@ export default function UserSignupPage() {
               <span className="text-transparent" style={{ WebkitTextStroke: '2px #d97706' }}>Journey.</span>
             </h1>
             <p className="text-stone-500 text-lg max-w-sm leading-relaxed">
-              Discover authentic creations worldwide. Connect with artisans and find unique items just for you.
+              Discover the artisans in your own state and city. Buy handmade, buy local.
             </p>
 
             {/* Step indicators on left side */}
@@ -84,7 +84,7 @@ export default function UserSignupPage() {
           </div>
 
           <div className="flex items-center gap-4">
-            {['Handcrafted', 'Verified', 'Secure'].map((t) => (
+            {['Handcrafted', 'Local', 'Cash on Delivery'].map((t) => (
               <span key={t} className="text-stone-700 text-xs tracking-widest">✦ {t}</span>
             ))}
           </div>
@@ -119,7 +119,7 @@ export default function UserSignupPage() {
               {step === 1 ? 'Create Account' : 'Your Details'}
             </h2>
             <p className="text-stone-600 text-sm mt-1">
-              {step === 1 ? 'Set up your login credentials' : 'Add delivery and personal info'}
+              {step === 1 ? 'Set up your login credentials' : 'Tell us where you are so we can show you artisans nearby'}
             </p>
           </div>
 
@@ -160,6 +160,17 @@ export default function UserSignupPage() {
                 </div>
               );
             })}
+
+            {step === 2 && (
+              <div className="border-t border-stone-800">
+                <RegionSelect
+                  required
+                  state={signupData.state}
+                  city={signupData.city}
+                  onChange={(r) => setSignupData({ ...signupData, ...r })}
+                />
+              </div>
+            )}
 
             <motion.button
               type="submit"

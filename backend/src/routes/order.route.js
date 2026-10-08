@@ -6,7 +6,7 @@ import {
   getOrderById,
   updateOrderStatus,
   deleteOrder,
-  getAllOrders,
+  getSellerOrders,
 } from "../controllers/order.controller.js";
 
 const router = Router();
@@ -16,7 +16,7 @@ router.post("/", protectRoute, userOnly, createOrder);
 router.get("/", protectRoute, userOnly, getUserOrders);
 
 //for sellers - PUT SPECIFIC ROUTES BEFORE PARAMETERIZED ROUTES
-router.get("/all", protectRoute, sellerOnly, getAllOrders); // ✅ Move this BEFORE /:id
+router.get("/seller", protectRoute, sellerOnly, getSellerOrders); // must stay BEFORE /:id
 router.put("/:id/status", protectRoute, sellerOnly, updateOrderStatus);
 router.delete("/:id", protectRoute, sellerOnly, deleteOrder);
 

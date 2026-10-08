@@ -10,62 +10,60 @@ import {
   getProduct, getProductReviews, createReview, deleteReview,
   getProductReviewsSummary, generateProductDetails, generateCareGuide, addToCart
 } from '../lib/api';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, Link } from 'react-router-dom';
+import { toast } from 'react-hot-toast';
+import useFavorites from '../hooks/useFavorites.js';
+import { followSeller, unfollowSeller, getCart } from '../lib/api';
+import { errMsg } from '../lib/errors';
 import useAuthUser from '../hooks/useAuthUser.js';
-import { axiosInstance } from '../lib/axios.js';
 import { BouncingDotsLoader } from '../components/Loading.jsx';
 
 export default function ProductDetailPage() {
-  const [isFollowing, setIsFollowing] = useState(false);
+  const [followOverride, setFollowOverride] = useState(null);
   const [loadingFollow, setLoadingFollow] = useState(false);
   const [selectedImageIndex, setSelectedImageIndex] = useState(0);
   const [quantity, setQuantity] = useState(1);
-  const [isFavorite, setIsFavorite] = useState(false);
   const [activeTab, setActiveTab] = useState('story');
   const [mounted, setMounted] = useState(false);
   const [showReviewForm, setShowReviewForm] = useState(false);
   const [reviewForm, setReviewForm] = useState({ rating: 5, comment: '' });
 
-  const { isLoading: authUserLoading, authUser } = useAuthUser();
+  const { authUser, type } = useAuthUser();
+  const { isFavorite: isSaved, toggle: toggleFavorite } = useFavorites();
   const queryClient = useQueryClient();
   const { id } = useParams();
   const navigate = useNavigate();
 
+  const { data, isLoading, error } = useQuery({ queryKey: ['product', id], queryFn: () => getProduct(id), enabled: !!id });
+
+  // Real follow state: comes from the logged-in buyer's follows list.
+  const sellerId = data?.seller?._id;
+  const followingFromServer = !!sellerId && (authUser?.follows || []).includes(sellerId);
+  const isFollowing = followOverride ?? followingFromServer;
+
   const toggleFollow = async () => {
-    if (!authUser) { alert('Please login first'); return; }
+    if (!authUser) { toast('Log in to follow artisans'); navigate('/user/login'); return; }
+    if (type !== 'user') { toast('Only buyer accounts can follow artisans'); return; }
     try {
       setLoadingFollow(true);
-      if (isFollowing) {
-        await axiosInstance.post(`/user/${data.seller._id}/unfollow`);
-        setIsFollowing(false);
-      } else {
-        await axiosInstance.post(`/user/${data.seller._id}/follow`);
-        setIsFollowing(true);
-      }
+      if (isFollowing) await unfollowSeller(sellerId);
+      else await followSeller(sellerId);
+      setFollowOverride(!isFollowing);
+      queryClient.invalidateQueries({ queryKey: ['authUser'] });
     } catch (err) {
-      alert(err.response?.data?.message || 'Failed to follow/unfollow');
+      toast.error(errMsg(err, 'Failed to follow/unfollow'));
     } finally {
       setLoadingFollow(false);
     }
   };
 
-  let change = true;
-  const [quantityCart, setQC] = useState('-');
-  useEffect(() => {
-    const getQuantity = async () => {
-      let temp = 0;
-      const res = await axiosInstance.get('/cart');
-      res.data.products.map((item) => { temp += item?.quantity; });
-      setQC(temp);
-    };
-    getQuantity();
-  }, [change]);
+  const { data: cart } = useQuery({ queryKey: ['cart'], queryFn: getCart, enabled: type === 'user' });
+  const quantityCart = type === 'user' ? (cart?.products || []).reduce((n, i) => n + (i?.quantity || 0), 0) : 0;
 
   useEffect(() => {
     setMounted(true);
   }, []);
 
-  const { data, isLoading, error } = useQuery({ queryKey: ['product', id], queryFn: () => getProduct(id), enabled: !!id });
   const { data: reviewsData, isLoading: reviewsLoading } = useQuery({ queryKey: ['productReviews', id], queryFn: () => getProductReviews(id), enabled: !!id });
   const { data: reviewsSummary } = useQuery({ queryKey: ['productReviewsSummary', id], queryFn: () => getProductReviewsSummary(id), enabled: !!id && reviewsData && reviewsData.length > 0 });
   const { data: aiDetails, isLoading: detailsLoading } = useQuery({ queryKey: ['productDetails', id], queryFn: () => generateProductDetails(data), enabled: !!data && activeTab === 'details', staleTime: 24 * 60 * 60 * 1000 });
@@ -74,27 +72,27 @@ export default function ProductDetailPage() {
   const createReviewMutation = useMutation({
     mutationFn: createReview,
     onSuccess: () => {
-      queryClient.invalidateQueries(['productReviews', id]);
-      queryClient.invalidateQueries(['product', id]);
+      queryClient.invalidateQueries({ queryKey: ['productReviews', id] });
+      queryClient.invalidateQueries({ queryKey: ['product', id] });
       setShowReviewForm(false);
       setReviewForm({ rating: 5, comment: '' });
     },
-    onError: (error) => { alert(error.message); }
+    onError: (error) => toast.error(errMsg(error))
   });
 
   const deleteReviewMutation = useMutation({
     mutationFn: deleteReview,
     onSuccess: () => {
-      queryClient.invalidateQueries(['productReviews', id]);
-      queryClient.invalidateQueries(['product', id]);
+      queryClient.invalidateQueries({ queryKey: ['productReviews', id] });
+      queryClient.invalidateQueries({ queryKey: ['product', id] });
     },
-    onError: (error) => { alert(error.message); }
+    onError: (error) => toast.error(errMsg(error))
   });
 
   const addToCartMutation = useMutation({
     mutationFn: ({ productId, quantity }) => addToCart({ productId, quantity }),
-    onSuccess: () => { alert('Product added to cart successfully!'); queryClient.invalidateQueries(['cart']); },
-    onError: (error) => { alert(error.message || 'Failed to add product to cart'); }
+    onSuccess: () => { toast.success('Added to cart'); queryClient.invalidateQueries({ queryKey: ['cart'] }); },
+    onError: (error) => toast.error(errMsg(error, 'Failed to add product to cart'))
   });
 
   const product = data ? {
@@ -109,11 +107,12 @@ export default function ProductDetailPage() {
     category: data.category?.replace(/"/g, '').trim() || 'Uncategorized',
     artisan: {
       name: data.seller?.businessName?.trim() || 'Unknown Artisan',
-      avatar: '🛍',
-      location: 'Global',
-      experience: '',
+      id: data.seller?._id,
+      avatar: data.seller?.profilePic,
+      location: [data.seller?.city, data.seller?.state].filter(Boolean).join(', ') || 'Location not set',
+      verified: !!data.seller?.verified,
       speciality: data.tags ? data.tags.join(', ') : '',
-      story: data.description?.replace(/"/g, '').trim() || 'No story available',
+      story: data.seller?.description?.trim() || 'This artisan hasn\'t shared their story yet.',
       totalProducts: 0,
       followers: 0,
       rating: data.rating || 0
@@ -130,10 +129,7 @@ export default function ProductDetailPage() {
       uniqueFeatures: data.tags || []
     },
     sustainability: {
-      ecofriendly: data.isActive,
-      fairTrade: data.seller?.verified || false,
-      carbonNeutral: false,
-      packaging: aiDetails?.packaging || 'Eco-friendly packaging'
+      packaging: aiDetails?.packaging || 'Protective packaging'
     }
   } : null;
 
@@ -141,7 +137,7 @@ export default function ProductDetailPage() {
 
   const handleSubmitReview = (e) => {
     e.preventDefault();
-    if (!reviewForm.rating) { alert('Please select a rating'); return; }
+    if (!reviewForm.rating) { toast('Please select a rating'); return; }
     createReviewMutation.mutate({ productId: id, rating: reviewForm.rating, comment: reviewForm.comment });
   };
 
@@ -150,7 +146,8 @@ export default function ProductDetailPage() {
   };
 
   const handleAddToCart = () => {
-    if (!authUser) { alert('Please login to add items to cart'); return; }
+    if (!authUser) { toast('Log in to add items to your cart'); navigate('/user/login'); return; }
+    if (type !== 'user') { toast('Only buyer accounts can buy'); return; }
     addToCartMutation.mutate({ productId: id, quantity });
   };
 
@@ -198,6 +195,14 @@ export default function ProductDetailPage() {
               className="p-2 text-stone-500 hover:text-stone-200 transition-colors border border-stone-800 hover:border-stone-600"
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
+              aria-label="Share this product"
+              onClick={async () => {
+                const url = window.location.href;
+                try {
+                  if (navigator.share) await navigator.share({ title: product.name, url });
+                  else { await navigator.clipboard.writeText(url); toast.success('Link copied'); }
+                } catch { /* share dismissed */ }
+              }}
             >
               <Share2 size={16} />
             </motion.button>
@@ -318,14 +323,14 @@ export default function ProductDetailPage() {
 
             {/* Badges */}
             <div className="flex gap-2 flex-wrap">
-              {product.sustainability.ecofriendly && (
-                <span className="flex items-center gap-1 px-3 py-1 border border-green-500/30 text-green-400 text-xs">
-                  🌱 Eco-Friendly
+              {product.artisan.location !== 'Location not set' && (
+                <span className="flex items-center gap-1 px-3 py-1 border border-amber-400/30 text-amber-400 text-xs">
+                  <MapPin size={11} /> Handmade in {product.artisan.location}
                 </span>
               )}
-              {product.sustainability.fairTrade && (
+              {product.artisan.verified && (
                 <span className="flex items-center gap-1 px-3 py-1 border border-blue-500/30 text-blue-400 text-xs">
-                  🤝 Fair Trade
+                  ✓ Verified artisan
                 </span>
               )}
             </div>
@@ -344,26 +349,27 @@ export default function ProductDetailPage() {
               <div className="flex gap-3">
                 <motion.button
                   onClick={handleAddToCart}
-                  disabled={product.inStock === 0 || addToCartMutation.isLoading}
+                  disabled={product.inStock === 0 || addToCartMutation.isPending}
                   className={`flex-1 font-black py-4 uppercase tracking-widest text-sm flex items-center justify-center gap-2 transition-all ${
-                    product.inStock > 0 && !addToCartMutation.isLoading
+                    product.inStock > 0 && !addToCartMutation.isPending
                       ? 'bg-amber-400 text-stone-950 hover:bg-amber-300'
                       : 'bg-stone-800 text-stone-600 cursor-not-allowed'
                   }`}
-                  whileHover={product.inStock > 0 && !addToCartMutation.isLoading ? { scale: 1.01 } : {}}
-                  whileTap={product.inStock > 0 && !addToCartMutation.isLoading ? { scale: 0.98 } : {}}
+                  whileHover={product.inStock > 0 && !addToCartMutation.isPending ? { scale: 1.01 } : {}}
+                  whileTap={product.inStock > 0 && !addToCartMutation.isPending ? { scale: 0.98 } : {}}
                 >
-                  {addToCartMutation.isLoading ? (
+                  {addToCartMutation.isPending ? (
                     <><Loader className="animate-spin" size={16} /> Adding...</>
                   ) : product.inStock > 0 ? `Add to Cart — ₹${(product.price * quantity).toFixed(2)}` : 'Out of Stock'}
                 </motion.button>
                 <motion.button
-                  onClick={() => setIsFavorite(!isFavorite)}
-                  className={`p-4 border-2 transition-all ${isFavorite ? 'border-amber-400 text-amber-400' : 'border-stone-700 text-stone-500 hover:border-stone-500'}`}
+                  onClick={() => toggleFavorite(id)}
+                  aria-label={isSaved(id) ? 'Remove from saved' : 'Save for later'}
+                  className={`p-4 border-2 transition-all ${isSaved(id) ? 'border-amber-400 text-amber-400' : 'border-stone-700 text-stone-500 hover:border-stone-500'}`}
                   whileHover={{ scale: 1.05 }}
                   whileTap={{ scale: 0.95 }}
                 >
-                  <Heart size={20} className={isFavorite ? 'fill-current' : ''} />
+                  <Heart size={20} className={isSaved(id) ? 'fill-current' : ''} />
                 </motion.button>
               </div>
             </div>
@@ -372,11 +378,11 @@ export default function ProductDetailPage() {
             <div className="flex items-center gap-6 pt-4 border-t border-stone-800">
               <div className="flex items-center gap-2 text-stone-500 text-xs">
                 <Shield size={14} className="text-green-400" />
-                <span>Authenticity Guaranteed</span>
+                <span>Handmade by a local artisan</span>
               </div>
               <div className="flex items-center gap-2 text-stone-500 text-xs">
                 <Truck size={14} className="text-blue-400" />
-                <span>Free Worldwide Shipping</span>
+                <span>Cash on delivery</span>
               </div>
             </div>
           </motion.div>
@@ -390,8 +396,8 @@ export default function ProductDetailPage() {
             </div>
             <div className="p-8 grid grid-cols-1 md:grid-cols-3 gap-8">
               <div className="text-center md:text-left">
-                <div className="w-20 h-20 bg-stone-800 border border-stone-700 flex items-center justify-center text-4xl mb-4 mx-auto md:mx-0">{product.artisan.avatar}</div>
-                <h3 className="text-stone-100 font-black text-lg mb-1">{product.artisan.name}</h3>
+                <img src={product.artisan.avatar} alt={product.artisan.name} className="w-20 h-20 object-cover border border-stone-700 mb-4 mx-auto md:mx-0" />
+                <Link to={`/seller/${product.artisan.id}`} className="block text-stone-100 hover:text-amber-400 transition-colors font-black text-lg mb-1">{product.artisan.name}</Link>
                 <p className="text-stone-600 flex items-center gap-1 justify-center md:justify-start text-sm mb-2">
                   <MapPin size={12} /> {product.artisan.location}
                 </p>
@@ -420,8 +426,8 @@ export default function ProductDetailPage() {
                 </div>
                 <div className="grid grid-cols-2 gap-4 border-t border-stone-800 pt-4">
                   <div>
-                    <p className="text-stone-600 text-xs uppercase tracking-widest mb-1">Experience</p>
-                    <p className="text-stone-200 font-semibold">{product.artisan.experience || 'Experienced craftsperson'}</p>
+                    <p className="text-stone-600 text-xs uppercase tracking-widest mb-1">Based in</p>
+                    <p className="text-stone-200 font-semibold">{product.artisan.location}</p>
                   </div>
                   <div>
                     <p className="text-stone-600 text-xs uppercase tracking-widest mb-1">Specialty</p>
@@ -615,13 +621,13 @@ export default function ProductDetailPage() {
                   </div>
                   <motion.button
                     type="submit"
-                    disabled={createReviewMutation.isLoading}
+                    disabled={createReviewMutation.isPending}
                     className="px-6 py-2.5 bg-amber-400 text-stone-950 font-bold text-xs uppercase tracking-widest hover:bg-amber-300 transition-all disabled:opacity-50 flex items-center gap-2"
                     whileHover={{ scale: 1.02 }}
                     whileTap={{ scale: 0.98 }}
                   >
                     <Send size={14} />
-                    {createReviewMutation.isLoading ? 'Submitting...' : 'Submit Review'}
+                    {createReviewMutation.isPending ? 'Submitting...' : 'Submit Review'}
                   </motion.button>
                 </motion.form>
               )}

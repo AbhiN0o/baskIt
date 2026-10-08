@@ -1,18 +1,36 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Menu, X, Home, ShoppingBag, ShoppingBasket } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Menu, X, Home, ShoppingBag, ShoppingBasket, User, LayoutDashboard, Package, ClipboardList, LogIn } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import useAuthUser from '../hooks/useAuthUser';
 
 export default function ArtisanPremiumNavbar({ menuItems }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef(null);
-  const { authUser, type } = useAuthUser();
+  const { type } = useAuthUser();
 
-  const menu = menuItems ?? [
-    { label: 'Home', icon: <Home size={15} />, href: '/' },
-    { label: 'Shop', icon: <ShoppingBag size={15} />, href: '/market' },
-    { label: 'Cart', icon: <ShoppingBasket size={15} />, href: '/cart' },
-  ];
+  // The menu adapts to who is looking, so every item leads somewhere useful.
+  const defaultMenu =
+    type === 'seller'
+      ? [
+          { label: 'Dashboard', icon: <LayoutDashboard size={15} />, href: '/seller/dashboard' },
+          { label: 'Products', icon: <Package size={15} />, href: '/seller/products' },
+          { label: 'Orders', icon: <ClipboardList size={15} />, href: '/seller/orders' },
+          { label: 'Shop', icon: <ShoppingBag size={15} />, href: '/market' },
+        ]
+      : type === 'user'
+      ? [
+          { label: 'Home', icon: <Home size={15} />, href: '/' },
+          { label: 'Shop', icon: <ShoppingBag size={15} />, href: '/market' },
+          { label: 'Cart', icon: <ShoppingBasket size={15} />, href: '/cart' },
+          { label: 'Me', icon: <User size={15} />, href: '/user' },
+        ]
+      : [
+          { label: 'Home', icon: <Home size={15} />, href: '/' },
+          { label: 'Shop', icon: <ShoppingBag size={15} />, href: '/market' },
+          { label: 'Log in', icon: <LogIn size={15} />, href: '/user/login' },
+        ];
+  const menu = menuItems ?? defaultMenu;
 
   useEffect(() => {
     const onEsc = (e) => { if (e.key === 'Escape') setOpen(false); };
@@ -40,12 +58,15 @@ export default function ArtisanPremiumNavbar({ menuItems }) {
             className="flex items-center gap-px bg-stone-800 border border-stone-700 shadow-2xl"
           >
             {menu.map((item, i) => (
-              <motion.a
-                key={i}
-                href={item.href}
+              <motion.div
+                key={item.href}
                 initial={{ opacity: 0, x: 10 }}
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ delay: i * 0.04 }}
+                className="contents"
+              >
+              <Link
+                to={item.href}
                 className="flex items-center gap-2 px-5 py-3.5 bg-stone-950 text-stone-400 hover:text-amber-400 hover:bg-stone-900 transition-all text-xs font-bold uppercase tracking-widest border-r border-stone-800 last:border-r-0 group"
                 onClick={() => setOpen(false)}
               >
@@ -53,7 +74,8 @@ export default function ArtisanPremiumNavbar({ menuItems }) {
                   {item.icon}
                 </span>
                 {item.label}
-              </motion.a>
+              </Link>
+              </motion.div>
             ))}
           </motion.div>
         )}
