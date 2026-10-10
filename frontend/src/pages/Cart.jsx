@@ -5,8 +5,8 @@ import { toast } from 'react-hot-toast';
 import { errMsg, inr } from '../lib/errors';
 import {
   ShoppingBag, Trash2, Plus, Minus, Heart,
-  ArrowLeft, Truck, Shield,
-  CreditCard, Loader, MapPin
+  ArrowLeft, Truck, Shield, Star,
+  CreditCard, Loader, MapPin, CheckCircle2, X
 } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getCart, updateCartItem, removeCartItem, clearCart, createOrder, addFavorite } from '../lib/api';
